@@ -1,0 +1,205 @@
+use crate::model::{now_ms, CommandRecord};
+use base64::Engine;
+use std::io::Read;
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
+
+static NEXT_COMMAND: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Debug)]
+pub enum ReadQuery {
+    ListPhysical,
+    DeviceInfo(String),
+    Connections,
+    SmartInfo { executable: String, device: String },
+}
+
+pub fn valid_device_id(id: &str) -> bool {
+    if id.len() > 40 || !id.starts_with("disk") {
+        return false;
+    }
+    let parts: Vec<&str> = id[4..].split('s').collect();
+    !parts.is_empty()
+        && parts
+            .iter()
+            .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+}
+
+impl ReadQuery {
+    pub fn command(&self) -> Result<(String, Vec<String>), String> {
+        let command = match self {
+            Self::ListPhysical => (
+                "/usr/sbin/diskutil".into(),
+                vec!["list".into(), "-plist".into(), "physical".into()],
+            ),
+            Self::DeviceInfo(id) if valid_device_id(id) => (
+                "/usr/sbin/diskutil".into(),
+                vec!["info".into(), "-plist".into(), id.clone()],
+            ),
+            Self::Connections => (
+                "/usr/sbin/system_profiler".into(),
+                vec![
+                    "-json".into(),
+                    "SPUSBDataType".into(),
+                    "SPThunderboltDataType".into(),
+                ],
+            ),
+            Self::SmartInfo { executable, device }
+                if valid_device_id(device) && allowed_smart_path(executable) =>
+            {
+                (
+                    executable.clone(),
+                    vec!["-a".into(), "-j".into(), format!("/dev/{device}")],
+                )
+            }
+            _ => {
+                return Err(
+                    "The metadata query has an invalid device identifier or executable.".into(),
+                )
+            }
+        };
+        Ok(command)
+    }
+}
+
+pub fn allowed_smart_path(path: &str) -> bool {
+    matches!(
+        path,
+        "/opt/homebrew/bin/smartctl" | "/usr/local/bin/smartctl" | "/usr/bin/smartctl"
+    )
+}
+
+pub fn execute(query: ReadQuery) -> Result<CommandRecord, String> {
+    let (program, arguments) = query.command()?;
+    let started_at = now_ms();
+    let start = Instant::now();
+    let mut record = CommandRecord {
+        id: format!(
+            "query-{started_at}-{}",
+            NEXT_COMMAND.fetch_add(1, Ordering::Relaxed)
+        ),
+        program: program.clone(),
+        arguments: arguments.clone(),
+        started_at,
+        duration_ms: 0,
+        exit_code: None,
+        timed_out: false,
+        stdout: String::new(),
+        stderr: String::new(),
+        stdout_base64: String::new(),
+        stderr_base64: String::new(),
+        stdout_utf8_valid: true,
+        stderr_utf8_valid: true,
+        launch_error: None,
+        stdout_artifact: None,
+        termination_signal: None,
+    };
+    let child = Command::new(&program)
+        .args(&arguments)
+        .env("LC_ALL", "C")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn();
+    let mut child = match child {
+        Ok(child) => child,
+        Err(error) => {
+            record.launch_error = Some(error.to_string());
+            return Ok(record);
+        }
+    };
+    let mut stdout = child.stdout.take().ok_or("Missing stdout pipe")?;
+    let mut stderr = child.stderr.take().ok_or("Missing stderr pipe")?;
+    // Drain both streams while the child runs; a large stderr must not deadlock stdout.
+    let out = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stdout.read_to_end(&mut bytes).map(|_| bytes)
+    });
+    let err = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stderr.read_to_end(&mut bytes).map(|_| bytes)
+    });
+    let timeout = if matches!(query, ReadQuery::Connections) {
+        Duration::from_secs(45)
+    } else {
+        Duration::from_secs(15)
+    };
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                record.exit_code = status.code();
+                break;
+            }
+            Ok(None) if start.elapsed() < timeout => std::thread::sleep(Duration::from_millis(20)),
+            Ok(None) => {
+                record.timed_out = true;
+                let _ = child.kill();
+                record.exit_code = child.wait().ok().and_then(|s| s.code());
+                break;
+            }
+            Err(error) => {
+                record.launch_error = Some(error.to_string());
+                let _ = child.kill();
+                let _ = child.wait();
+                break;
+            }
+        }
+    }
+    let stdout = out
+        .join()
+        .map_err(|_| "stdout reader failed")?
+        .map_err(|e| e.to_string())?;
+    let stderr = err
+        .join()
+        .map_err(|_| "stderr reader failed")?
+        .map_err(|e| e.to_string())?;
+    record.duration_ms = start.elapsed().as_millis() as u64;
+    record.stdout_utf8_valid = std::str::from_utf8(&stdout).is_ok();
+    record.stderr_utf8_valid = std::str::from_utf8(&stderr).is_ok();
+    record.stdout = String::from_utf8_lossy(&stdout).into_owned();
+    record.stderr = String::from_utf8_lossy(&stderr).into_owned();
+    record.stdout_base64 = base64::engine::general_purpose::STANDARD.encode(stdout);
+    record.stderr_base64 = base64::engine::general_purpose::STANDARD.encode(stderr);
+    Ok(record)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_paths_options_shell_injection_and_incomplete_device_ids() {
+        for bad in [
+            "disk",
+            "disk1;whoami",
+            "disk1 s2",
+            "/dev/disk1",
+            "disk1s",
+            "disk1ss2",
+            "disk1\n",
+            "--help",
+            "disk1/../../",
+        ] {
+            assert!(!valid_device_id(bad), "accepted {bad:?}");
+            assert!(ReadQuery::DeviceInfo(bad.into()).command().is_err());
+        }
+        for valid in ["disk0", "disk12", "disk4s1", "disk1s2s3"] {
+            assert!(valid_device_id(valid));
+        }
+    }
+
+    #[test]
+    fn smart_request_has_fixed_read_information_flags_and_trusted_executable() {
+        let query = ReadQuery::SmartInfo {
+            executable: "/opt/homebrew/bin/smartctl".into(),
+            device: "disk3".into(),
+        };
+        assert_eq!(query.command().unwrap().1, ["-a", "-j", "/dev/disk3"]);
+        let rogue = ReadQuery::SmartInfo {
+            executable: "/tmp/smartctl".into(),
+            device: "disk3".into(),
+        };
+        assert!(rogue.command().is_err());
+    }
+}
