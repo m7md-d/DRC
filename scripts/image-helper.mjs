@@ -10,13 +10,15 @@ import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 
 export async function buildImageHelper() {
-  if (process.platform !== "darwin") return;
+  if (!["darwin", "linux"].includes(process.platform)) throw new Error("Image adapter builds currently support macOS and Linux.");
+  const linux = process.platform === "linux";
+  if (linux) await new Promise((done, reject) => { const child = spawn("bash", [resolve(import.meta.dirname, "linux/build-ddrescue.sh")], { stdio: "inherit" }); child.on("error", reject); child.on("exit", code => code === 0 ? done() : reject(new Error(`GNU adapter build exited ${code}`))); });
   const root = resolve(import.meta.dirname, "../src-tauri");
-  const include = "/opt/homebrew/include";
-  if (!existsSync(`${include}/tsk/libtsk.h`)) return;
+  const include = linux ? "/usr/include" : "/opt/homebrew/include";
+  if (!existsSync(`${include}/tsk/libtsk.h`)) throw new Error("Missing Sleuth Kit development headers. On Debian: sudo apt install libtsk-dev");
   const source = resolve(root, "src/image_helper.cpp");
   const target =
-    process.arch === "arm64" ? "aarch64-apple-darwin" : "x86_64-apple-darwin";
+    linux ? (process.arch === "arm64" ? "aarch64-unknown-linux-gnu" : "x86_64-unknown-linux-gnu") : (process.arch === "arm64" ? "aarch64-apple-darwin" : "x86_64-apple-darwin");
   const directory = resolve(root, "binaries");
   mkdirSync(directory, { recursive: true });
   const output = resolve(directory, `drc-tsk-${target}`);
@@ -24,7 +26,7 @@ export async function buildImageHelper() {
   const key = createHash("sha256")
     .update(readFileSync(source))
     .update(readFileSync(`${include}/tsk/base/tsk_base.h`))
-    .update(realpathSync("/opt/homebrew/lib/libtsk.23.dylib"))
+    .update(linux ? readFileSync(`${include}/tsk/libtsk.h`) : realpathSync("/opt/homebrew/lib/libtsk.23.dylib"))
     .update(target)
     .digest("hex");
   if (
@@ -35,7 +37,7 @@ export async function buildImageHelper() {
     return;
   await new Promise((resolve, reject) => {
     const child = spawn(
-      "/usr/bin/clang++",
+      linux ? "/usr/bin/g++" : "/usr/bin/clang++",
       [
         "-std=c++17",
         "-O2",
@@ -44,7 +46,7 @@ export async function buildImageHelper() {
         "-Werror",
         `-I${include}`,
         source,
-        "-L/opt/homebrew/lib",
+        ...(linux ? ["-Wl,-rpath,$ORIGIN/../lib/drc"] : ["-L/opt/homebrew/lib"]),
         "-ltsk",
         "-o",
         output,

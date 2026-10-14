@@ -1,7 +1,9 @@
 mod acquisition;
 pub mod contracts;
 mod extraction;
+mod host_evidence;
 mod images;
+mod linux;
 mod model;
 mod mount_guard;
 mod platform;
@@ -12,7 +14,7 @@ mod store;
 
 use acquisition::{Job, Manager as AcquisitionManager, Plan, Settings, Source};
 use model::*;
-use platform::{MacOsBackend, PlatformBackend};
+
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -33,11 +35,11 @@ struct Runtime {
     extraction: Arc<extraction::Manager>,
 }
 
-fn require_macos() -> Result<(), String> {
-    if cfg!(target_os = "macos") {
+fn require_host() -> Result<(), String> {
+    if cfg!(any(target_os = "macos", target_os = "linux")) {
         Ok(())
     } else {
-        Err("Live device access is implemented for macOS in this build. Filesystem support is independent of the host platform.".into())
+        Err("This build supports macOS and Linux. Windows integration is not implemented.".into())
     }
 }
 
@@ -49,11 +51,38 @@ fn emit_record(app: &tauri::AppHandle, record: CommandRecord) {
 }
 
 #[tauri::command]
+async fn read_host_evidence(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Runtime>,
+    kind: String,
+) -> Result<QueryResult, String> {
+    if !cfg!(target_os = "linux") {
+        return Err("Use the macOS host connection report on this platform. Advanced host evidence currently targets Linux.".into());
+    }
+    // Kernel-ring-buffer reads neither probe the source nor share a device-query gate.
+    let _gate = if kind == "kernel" {
+        None
+    } else {
+        require_idle(&state)?;
+        Some(
+            state
+                .discovery
+                .try_lock()
+                .map_err(|_| "A query is already running")?,
+        )
+    };
+    let result = host_evidence::collect(&kind)?;
+    emit_record(&app, result.record.clone());
+    app.state::<Arc<Store>>().append("hostEvidence", &result)?;
+    Ok(result)
+}
+
+#[tauri::command]
 async fn discover_devices(
     app: tauri::AppHandle,
     state: tauri::State<'_, Runtime>,
 ) -> Result<Discovery, String> {
-    require_macos()?;
+    require_host()?;
     require_idle(&state)?;
     let state = state.inner();
     // A refresh and a user query cannot overlap on the same metadata source.
@@ -61,7 +90,7 @@ async fn discover_devices(
         .discovery
         .try_lock()
         .map_err(|_| "A metadata query is already running.")?;
-    let mut result = MacOsBackend.discover(&mut |record| emit_record(&app, record))?;
+    let mut result = platform::backend().discover(&mut |record| emit_record(&app, record))?;
     let store = app.state::<Arc<Store>>();
     for device in &mut result.devices {
         policy::apply_protection(&store, device)?;
@@ -84,7 +113,7 @@ async fn read_smart(
     state: tauri::State<'_, Runtime>,
     request: DeviceRequest,
 ) -> Result<QueryResult, String> {
-    require_macos()?;
+    require_host()?;
     require_idle(&state)?;
     let _guard = state
         .discovery
@@ -102,7 +131,7 @@ async fn read_smart(
             .protection_reason
             .unwrap_or("This medium permits discovery metadata only.".into()));
     }
-    let result = MacOsBackend.smart(&device, &mut |record| emit_record(&app, record))?;
+    let result = platform::backend().smart(&device, &mut |record| emit_record(&app, record))?;
     emit_record(&app, result.record.clone());
     app.state::<Arc<Store>>().append(
         "smart",
@@ -116,13 +145,13 @@ async fn read_connections(
     app: tauri::AppHandle,
     state: tauri::State<'_, Runtime>,
 ) -> Result<QueryResult, String> {
-    require_macos()?;
+    require_host()?;
     require_idle(&state)?;
     let _guard = state
         .discovery
         .try_lock()
         .map_err(|_| "A metadata query is already running.")?;
-    let result = MacOsBackend.connections()?;
+    let result = platform::backend().connections()?;
     emit_record(&app, result.record.clone());
     app.state::<Arc<Store>>().append("connection", &result)?;
     Ok(result)
@@ -185,7 +214,7 @@ fn start_device_watch(
     app: tauri::AppHandle,
     state: tauri::State<'_, Runtime>,
 ) -> Result<(), String> {
-    require_macos()?;
+    require_host()?;
     let mut watcher = state
         .watcher
         .lock()
@@ -201,8 +230,16 @@ fn start_device_watch(
         *watcher = None;
     }
     // diskutil activity subscribes to Disk Arbitration events; it does not scan sectors.
-    let mut child = Command::new("/usr/sbin/diskutil")
-        .arg("activity")
+    let (program, args) = if cfg!(target_os = "linux") {
+        (
+            "/usr/bin/udevadm",
+            vec!["monitor", "--udev", "--subsystem-match=block"],
+        )
+    } else {
+        ("/usr/sbin/diskutil", vec!["activity"])
+    };
+    let mut child = Command::new(program)
+        .args(args)
         .env("LC_ALL", "C")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -366,34 +403,41 @@ fn path_stores(app: &tauri::AppHandle, path: &Path) -> Result<Vec<String>, Strin
     if !path.is_absolute() {
         return Err("A local absolute path is required.".into());
     }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = app;
+        linux::path_stores(path)
+    }
     #[cfg(target_os = "macos")]
-    let query = {
-        use std::os::unix::ffi::OsStrExt;
-        let path =
-            std::ffi::CString::new(path.as_os_str().as_bytes()).map_err(|e| e.to_string())?;
-        let mut filesystem = std::mem::MaybeUninit::<libc::statfs>::uninit();
-        if unsafe { libc::statfs(path.as_ptr(), filesystem.as_mut_ptr()) } != 0 {
-            return Err(std::io::Error::last_os_error().to_string());
-        }
-        let filesystem = unsafe { filesystem.assume_init() };
-        let from = unsafe { std::ffi::CStr::from_ptr(filesystem.f_mntfromname.as_ptr()) }
-            .to_str()
-            .map_err(|e| e.to_string())?;
-        let id = from
-            .strip_prefix("/dev/")
-            .filter(|id| query::valid_device_id(id))
-            .ok_or("Only local volumes with resolvable physical backing are admitted.")?;
-        query::ReadQuery::DeviceInfo(id.into())
-    };
-    #[cfg(not(target_os = "macos"))]
-    let query = {
-        let _ = path;
-        return Err("Path backing is not implemented on this host.".into());
-    };
-    let record = query::execute(query)?;
-    let result = platform::successful_plist(&record);
-    emit_record(app, record);
-    policy::physical_stores(&result?)
+    {
+        let query = {
+            use std::os::unix::ffi::OsStrExt;
+            let path =
+                std::ffi::CString::new(path.as_os_str().as_bytes()).map_err(|e| e.to_string())?;
+            let mut filesystem = std::mem::MaybeUninit::<libc::statfs>::uninit();
+            if unsafe { libc::statfs(path.as_ptr(), filesystem.as_mut_ptr()) } != 0 {
+                return Err(std::io::Error::last_os_error().to_string());
+            }
+            let filesystem = unsafe { filesystem.assume_init() };
+            let from = unsafe { std::ffi::CStr::from_ptr(filesystem.f_mntfromname.as_ptr()) }
+                .to_str()
+                .map_err(|e| e.to_string())?;
+            let id = from
+                .strip_prefix("/dev/")
+                .filter(|id| query::valid_device_id(id))
+                .ok_or("Only local volumes with resolvable physical backing are admitted.")?;
+            query::ReadQuery::DeviceInfo(id.into())
+        };
+        let record = query::execute(query)?;
+        let result = platform::successful_plist(&record);
+        emit_record(app, record);
+        policy::physical_stores(&result?)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        let _ = (app, path);
+        Err("Path backing is unavailable on this host.".into())
+    }
 }
 
 fn admit_path(
@@ -420,10 +464,8 @@ fn admit_path(
                     .into(),
             );
         }
-        let record = query::execute(query::ReadQuery::DeviceInfo(id.clone()))?;
-        let fresh = platform::successful_plist(&record);
-        emit_record(app, record);
-        if platform::identity_key(&fresh?) != device.identity_key {
+        let fresh = platform::read_info(id, &mut |record| emit_record(app, record))?;
+        if platform::identity_key(&fresh) != device.identity_key {
             return Err("The path's backing medium changed since discovery. Refresh before accessing files.".into());
         }
         if device.metadata_only {
@@ -605,18 +647,20 @@ fn physical_source(
             .clone()
             .unwrap_or("Metadata-only medium".into()));
     }
+    policy::require_acquisition(&device, &device.info)?;
+    validate_physical(app, &device)?;
     let guard = mount_guard::MountGuard::acquire(&device.id)?;
     validate_physical(app, &device)?;
-    let input = policy::open_readonly(Path::new(&format!("/dev/r{}", device.id)))?;
+    let input = guard.open_source()?;
     validate_physical(app, &device)?;
     Ok((device, input, guard))
 }
 
 fn validate_physical(app: &tauri::AppHandle, device: &Device) -> Result<(), String> {
-    let record = query::execute(query::ReadQuery::DeviceInfo(device.id.clone()))?;
-    let fresh = platform::successful_plist(&record);
-    emit_record(app, record);
-    policy::require_acquisition(device, &fresh?)?;
+    let fresh = platform::read_info(&device.id, &mut |record| emit_record(app, record))?;
+    policy::require_acquisition(device, &fresh)?;
+    #[cfg(target_os = "linux")]
+    linux::require_unmounted(&device.id)?;
     // Inspect mounted volumes through metadata, including APFS physical stores.
     // No unmount/repair is performed automatically because unmount itself may flush writes.
     #[cfg(target_os = "macos")]
@@ -661,7 +705,7 @@ async fn prepare_acquisition(
     state: tauri::State<'_, Runtime>,
     request: AcquireRequest,
 ) -> Result<Plan, String> {
-    require_macos()?;
+    require_host()?;
     require_idle(&state)?;
     let _gate = state
         .discovery
@@ -723,6 +767,7 @@ async fn prepare_acquisition(
                 && device
                     .info
                     .get("DeviceBlockSize")
+                    .or_else(|| device.info.get("log-sec"))
                     .and_then(serde_json::Value::as_str)
                     .and_then(|s| s.parse::<u32>().ok())
                     != Some(request.settings.sector_size)
@@ -972,6 +1017,7 @@ pub fn run() {
             discover_devices,
             read_smart,
             read_connections,
+            read_host_evidence,
             open_image,
             close_image,
             read_image,

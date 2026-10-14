@@ -7,12 +7,14 @@ export function Modal({
   close,
   children,
   wide = false,
+  className = "",
 }: {
   title: string;
   subtitle: string;
   close: () => void;
   children: ReactNode;
   wide?: boolean;
+  className?: string;
 }) {
   const ref = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -54,7 +56,7 @@ export function Modal({
     <div className="modal-backdrop">
       <section
         ref={ref}
-        className={`workspace-modal ${wide ? "wide" : ""}`}
+        className={`workspace-modal ${wide ? "wide" : ""} ${className}`}
         role="dialog"
         aria-modal="true"
         aria-label={title}

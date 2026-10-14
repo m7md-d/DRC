@@ -10,6 +10,12 @@ static NEXT_COMMAND: AtomicU64 = AtomicU64::new(1);
 #[derive(Debug)]
 pub enum ReadQuery {
     ListPhysical,
+    LinuxList,
+    LinuxInfo(String),
+    LinuxProperties(String),
+    LinuxConnections,
+    LinuxPci,
+    LinuxKernel,
     DeviceInfo(String),
     Connections,
     SmartInfo { executable: String, device: String },
@@ -29,6 +35,37 @@ pub fn valid_device_id(id: &str) -> bool {
 impl ReadQuery {
     pub fn command(&self) -> Result<(String, Vec<String>), String> {
         let command = match self {
+            Self::LinuxPci => ("/usr/bin/lspci".into(), vec!["-nnk".into()]),
+            Self::LinuxKernel => ("/usr/bin/dmesg".into(), vec!["--json".into()]),
+            Self::LinuxList => (
+                "/usr/bin/lsblk".into(),
+                vec![
+                    "--json".into(),
+                    "--bytes".into(),
+                    "--output".into(),
+                    crate::linux::COLUMNS.into(),
+                ],
+            ),
+            Self::LinuxInfo(id) if crate::linux::valid_id(id) => (
+                "/usr/bin/lsblk".into(),
+                vec![
+                    "--json".into(),
+                    "--bytes".into(),
+                    "--output".into(),
+                    crate::linux::COLUMNS.into(),
+                    "--".into(),
+                    format!("/dev/{id}"),
+                ],
+            ),
+            Self::LinuxProperties(id) if crate::linux::valid_id(id) => (
+                "/usr/bin/udevadm".into(),
+                vec![
+                    "info".into(),
+                    "--query=property".into(),
+                    format!("--name=/dev/{id}"),
+                ],
+            ),
+            Self::LinuxConnections => ("/usr/bin/lsusb".into(), vec!["-t".into()]),
             Self::ListPhysical => (
                 "/usr/sbin/diskutil".into(),
                 vec!["list".into(), "-plist".into(), "physical".into()],
@@ -46,7 +83,11 @@ impl ReadQuery {
                 ],
             ),
             Self::SmartInfo { executable, device }
-                if valid_device_id(device) && allowed_smart_path(executable) =>
+                if (if cfg!(target_os = "linux") {
+                    crate::linux::valid_id(device)
+                } else {
+                    valid_device_id(device)
+                }) && allowed_smart_path(executable) =>
             {
                 (
                     executable.clone(),
@@ -66,7 +107,10 @@ impl ReadQuery {
 pub fn allowed_smart_path(path: &str) -> bool {
     matches!(
         path,
-        "/opt/homebrew/bin/smartctl" | "/usr/local/bin/smartctl" | "/usr/bin/smartctl"
+        "/opt/homebrew/bin/smartctl"
+            | "/usr/local/bin/smartctl"
+            | "/usr/bin/smartctl"
+            | "/usr/sbin/smartctl"
     )
 }
 

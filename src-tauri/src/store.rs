@@ -26,6 +26,8 @@ pub struct SessionData {
     pub original_import: Option<String>,
     #[serde(default)]
     pub image_reports: Vec<Value>,
+    #[serde(default)]
+    pub host_evidence: Vec<Value>,
 }
 
 #[derive(Clone, Serialize)]
@@ -218,6 +220,7 @@ impl Store {
                     );
                 }
                 "imageReport" => session.image_reports.push(parse(&payload)?),
+                "hostEvidence" => session.host_evidence.push(parse(&payload)?),
                 _ => return Err(format!("Unsupported saved entry kind: {kind}")),
             }
         }
@@ -337,6 +340,9 @@ impl Store {
                 "connection",
                 serde_json::to_value(s).map_err(|e| e.to_string())?,
             ));
+        }
+        for report in session.host_evidence {
+            entries.push(("hostEvidence", report));
         }
         for report in session.image_reports {
             entries.push(("imageReport", report));

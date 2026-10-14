@@ -84,6 +84,7 @@ export interface SessionData {
   connectionReport: QueryResult | null;
   originalImport: string | null;
   imageReports?: Json[];
+  hostEvidence?: Json[];
 }
 
 export interface ImageSource {
@@ -165,6 +166,7 @@ export interface AcquisitionSettings {
   sectorSize: number;
   retryPasses: number;
   copyingOnly: boolean;
+  reverse?: boolean;
   timeoutSeconds: number;
   maxReadRate: string | null;
 }

@@ -1,3 +1,7 @@
+# Current implementation — 0.4.0
+
+The current feature and installation summary is in [README](../README.md) and [Linux installation](LINUX-INSTALL.md). Easy and Professional share the same sessions and native source protections. Linux uses its own metadata/backing/connection adapter and may obtain a read-only exclusive descriptor through UDisks2. Physical Linux authorization and device exclusion remain unvalidated on hardware; file-image acquisition/extraction use the same tested core. The following earlier implementation notes describe their dated stages and are not a current capability checklist.
+
 # DRC 0.1 implementation
 
 The user is here to inspect connected storage, see every reported field and run explicitly selected queries from a standalone desktop application.

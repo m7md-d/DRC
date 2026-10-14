@@ -5,7 +5,7 @@ import { Icon } from "./Icon";
 import { FieldTable } from "./FieldTable";
 import { Select } from "./Select";
 import { AcquisitionCharts } from "./AcquisitionCharts";
-import { humanBytes, commandLine } from "./data";
+import { humanBytes, commandLine, canAcquireDevice } from "./data";
 import type {
   AcquisitionJob,
   AcquisitionPlan,
@@ -23,27 +23,32 @@ const defaults: AcquisitionSettings = {
   timeoutSeconds: 30,
   maxReadRate: null,
 };
-const sourceLabel = (source: AcquisitionJob["source"]) =>
+const sourceLabel = (source: AcquisitionJob["source"], platform = "macOS") =>
   source.kind === "image"
     ? source.path
-    : `/dev/r${source.device.id} · ${source.device.name}`;
+    : `/dev/${platform === "macOS" ? "r" : ""}${source.device.id} · ${source.device.name}`;
 export function AcquisitionPanel({
   device,
+  simple = false,
+  platform = "macOS",
   jobs,
   busy,
   close,
   started,
 }: {
   device?: Device;
+  simple?: boolean;
+  platform?: string;
   jobs: AcquisitionJob[];
   busy: boolean;
   close: () => void;
   started: (job: AcquisitionJob) => void;
 }) {
-  const [kind, setKind] = useState<"image" | "physical">("image");
+  const mounted = useRef(true);
+  const [kind, setKind] = useState<"image" | "physical">(simple && canAcquireDevice(device) ? "physical" : "image");
   const [image, setImage] = useState("");
   const [destination, setDestination] = useState("");
-  const [settings, setSettings] = useState<AcquisitionSettings>(defaults);
+  const [settings, setSettings] = useState<AcquisitionSettings>({ ...defaults, sectorSize: simple && canAcquireDevice(device) ? Number((device.info as Record<string, Json>)?.DeviceBlockSize ?? (device.info as Record<string, Json>)?.["log-sec"] ?? 512) : 512 });
   const [plan, setPlan] = useState<AcquisitionPlan | null>(null);
   const planRef = useRef<AcquisitionPlan | null>(null);
   const [confirmation, setConfirmation] = useState("");
@@ -65,9 +70,10 @@ export function AcquisitionPanel({
     close();
   }, [discard, close]);
   useEffect(
-    () => () => {
+    () => { mounted.current = true; return () => {
+      mounted.current = false;
       if (planRef.current) void bridge.cancelPlan(planRef.current.ticket);
-    },
+    }; },
     [],
   );
   async function action(fn: () => Promise<void>) {
@@ -94,6 +100,7 @@ export function AcquisitionPanel({
           ? {
               ...resume.settings,
               copyingOnly: settings.copyingOnly,
+              reverse: settings.reverse ?? false,
               retryPasses: settings.retryPasses,
               timeoutSeconds: settings.timeoutSeconds,
               maxReadRate: settings.maxReadRate,
@@ -102,13 +109,14 @@ export function AcquisitionPanel({
         : settings,
       resumeJob: resume?.id ?? null,
     });
+    if (!mounted.current) { await bridge.cancelPlan(next.ticket); return; }
     planRef.current = next;
     setPlan(next);
     setConfirmation("");
   }
   return (
     <Modal
-      title="Raw acquisition"
+      title={simple ? "Create a disk image" : "Raw acquisition"}
       subtitle="SOURCE READ ONLY → NEW IMAGE + RESUME MAP"
       close={dismiss}
       wide
@@ -128,7 +136,7 @@ export function AcquisitionPanel({
             <>
               <div className="review-fact">
                 <span className="eyebrow">READ-ONLY SOURCE</span>
-                <code>{sourceLabel(plan.source)}</code>
+                <code>{sourceLabel(plan.source, platform)}</code>
                 <span>
                   {plan.sourceSize} bytes · {humanBytes(plan.sourceSize)}
                 </span>
@@ -166,8 +174,7 @@ export function AcquisitionPanel({
               </div>
               <p className="panel-description">
                 Execution binds the input to an already opened read-only handle.
-                Physical sources require no mounted volumes and an active Disk
-                Arbitration mount veto. This does not establish a hardware or
+                Physical sources require no mounted volumes and {platform === "Linux" ? "an exclusive read-only block-device handle" : "an active Disk Arbitration mount veto"}. This does not establish a hardware or
                 system-wide write block.
               </p>
               <label className="form-field">
@@ -230,7 +237,7 @@ export function AcquisitionPanel({
                     active ||
                     !device ||
                     device.metadataOnly ||
-                    device.internal !== false
+                    !canAcquireDevice(device)
                   }
                   onClick={() => {
                     setKind("physical");
@@ -238,7 +245,7 @@ export function AcquisitionPanel({
                       ...s,
                       sectorSize: Number(
                         (device?.info as Record<string, Json>)
-                          ?.DeviceBlockSize ?? 512,
+                          ?.DeviceBlockSize ?? (device?.info as Record<string, Json>)?.["log-sec"] ?? 512,
                       ),
                     }));
                   }}
@@ -247,6 +254,8 @@ export function AcquisitionPanel({
                   Selected physical device
                 </button>
               </div>
+              {device?.metadataOnly && <div className="inline-note"><Icon name="shield"/><span>{device.protectionReason} Choose an existing image file or select another external source.</span></div>}
+              {device && !device.metadataOnly && !canAcquireDevice(device) && <p className="panel-description">The selected device is not positively identified as an external source on macOS or a resolved non-system Linux disk. Physical acquisition is unavailable for this selection; you can still choose an image file.</p>}
               {kind === "image" ? (
                 <label className="form-field">
                   Source image
@@ -274,7 +283,7 @@ export function AcquisitionPanel({
               ) : (
                 <div className="review-fact">
                   <code>
-                    /dev/r{device?.id} · {device?.name}
+                    /dev/{platform === "macOS" ? "r" : ""}{device?.id} · {device?.name}
                   </code>
                   <span>
                     {device?.sizeBytes} bytes · observed descriptor, not unique
@@ -311,6 +320,8 @@ export function AcquisitionPanel({
                   </button>
                 </div>
               </label>
+              {simple && <div className="easy-copy-defaults"><Icon name="shield"/><div><strong>Full-source image · copying phase · zero retries</strong><p>Choose the source and destination, then review. Advanced settings are available below; no phase or retry is chosen automatically.</p></div></div>}
+              <details className="advanced-copy" open={simple ? undefined : true}><summary>Advanced copy settings</summary>
               <div className="form-grid">
                 <label className="form-field">
                   Input offset · bytes
@@ -425,11 +436,12 @@ export function AcquisitionPanel({
                   </small>
                 </span>
               </label>
+              <label className="check-field"><input type="checkbox" checked={settings.reverse ?? false} disabled={working || active} onChange={e=>setSettings(s=>({...s,reverse:e.target.checked}))}/><span>Read backwards<small>Explicit reverse direction for the requested range. Kept in the command preview and saved parameters.</small></span></label>
+              </details>
               <p className="panel-description">
                 The read-success timeout belongs to ddrescue; it cannot
-                guarantee an immediate return from a blocked macOS I/O call.
-                Disk destinations, source writes and privilege elevation are
-                unavailable.
+                guarantee an immediate return from a blocked operating-system I/O call.
+                Disk destinations and source writes are unavailable. {platform === "Linux" ? "Source preparation may open the system authorization dialog to request a read-only handle for this device; DRC stays unprivileged." : "Privilege elevation is unavailable in this adapter."}
               </p>
               <button
                 className="button primary"
@@ -485,7 +497,7 @@ export function AcquisitionPanel({
                 <strong>{job.state}</strong>
                 <span>Exit status: {job.exitCode ?? "not available"}</span>
               </div>
-              <code className="artifact-path">{sourceLabel(job.source)}</code>
+              <code className="artifact-path">{sourceLabel(job.source, platform)}</code>
               <p className="panel-description">{job.message}</p>
               <AcquisitionCharts key={job.id} job={job} />
               {!["running", "pausing", "completed"].includes(job.state) && (

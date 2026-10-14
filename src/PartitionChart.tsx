@@ -9,9 +9,9 @@ const colors = [
 ];
 export function PartitionChart({ device }: { device: Device }) {
   const entries = device.partitions.map((p, i) => ({
-    label: displayValue(getField(p, "DeviceIdentifier")),
-    name: displayValue(getField(p, "Content")),
-    size: getField(p, "Size"),
+    label: displayValue(getField(p, "DeviceIdentifier") ?? getField(p, "kname")),
+    name: displayValue(getField(p, "Content") ?? getField(p, "fstype")),
+    size: getField(p, "Size") ?? getField(p, "size"),
     index: i,
   }));
   if (

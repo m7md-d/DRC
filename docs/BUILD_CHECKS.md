@@ -1,35 +1,28 @@
-# Local build verification — 13 October 2026
+# DRC 0.4.0 verification — 14 October 2026
 
-## Packaged application
+## Native packages
 
-- macOS arm64 release bundle: `src-tauri/target/release/bundle/macos/DRC.app`, with a standalone copy at `DRC.app` in the project root.
-- Embedded production assets; no browser or development server required.
-- Local ad-hoc bundle signing and deep/strict verification succeeded. This is not Developer ID distribution signing or notarization.
-- Interface-owned copy was checked for English-only text. Source-reported localized values are preserved.
+- macOS arm64 release bundle with embedded production assets, copied to the project-root `DRC.app`. Local ad-hoc signing and deep/strict verification pass. Developer ID signing and notarization remain unavailable.
+- Debian 12 arm64 package built in an isolated Linux container. A fresh Debian runtime image installs the package through APT and resolves the private image-reader library without development headers. GNU ddrescue reports 1.30; Sleuth Kit reports 4.11.1.
+- GitHub Actions builds and checks amd64 and arm64 independently. A tagged release is published only after both jobs succeed. Local arm64 evidence does not imply local amd64 or physical-hardware validation.
+- Linux desktop UI, UDisks2 authentication prompts and dedicated physical-disk acquisition still require a real desktop test. Ubuntu and Mint are command-reference profiles, not independently validated package targets.
 
 ## Automated checks
 
-- Frontend production type check and build passed.
-- Five frontend tests passed: complete field retention, unambiguous paths, exact byte arithmetic, SMART flag decoding and inert terminal escape sequences.
-- Six Rust tests passed: large protocol counters, plist field preservation, hostile identifier rejection, fixed SMART query flags, changed device descriptors and nonzero SMART status preservation.
-- Rust Clippy passed with warnings denied.
-- Dependency audit reported zero known vulnerabilities at verification time.
-- README and implementation-document local links were checked.
+- Production TypeScript check and frontend build pass. Fifteen frontend tests cover exact numeric fields, paths, SMART flags, map coverage, inert terminal escapes and the offline reference's OS profiles, effects and searchable flags.
+- Thirty macOS Rust tests and thirty-one Linux Rust tests pass. Coverage includes descriptor/protection checks, layered hardware backing, no-namespace host evidence, returned descriptor restrictions, acquisition/map verification, controlled stop/resume and image extraction.
+- Rust Clippy passes with warnings denied on both hosts.
+- GNU ddrescue tests use generated regular images. Simulated unreadable regions cannot become a falsely complete image merely because the output has full length.
+- The Linux fault harness exercises short reads, ENODEV after a readable prefix and a delayed read overlapping a stop request. After removing each injected fault, the same image/map pair resumes in reverse and matches the position-unique source bytes exactly. Source hashes stay unchanged. Original streams and mapfiles are recorded in `linux-fault-results-ARCH.json` release assets.
+- The kernel harness uses an owned generated read-only loop image. Mounting while exclusively claimed is refused, claiming a mounted source returns EBUSY and writing through the read-only descriptor returns EBADF. Source hash stays unchanged. Its scope and results are recorded in `linux-kernel-results-ARCH.json` release assets.
+- Image-reader tests use generated MBR/FAT16 images with allocated, deleted, Unicode and fragmented binary files. An NTFS/exFAT recovery corpus has not been validated.
 
 ## Native-window checks
 
-- Application opened in its own macOS window using `tauri://localhost` embedded content.
-- Three physical devices were reported: two USB devices and one internal device.
-- A connected NTFS partition was displayed from actual diskutil data, including its original layout fields.
-- Filtering layout fields reduced the visible count from 10 to 1 and displayed 9 filtered fields; clearing the filter restored all 10.
-- Copy session JSON completed in the native window.
-- A requested USB/Thunderbolt host report completed with exit 0 and exposed all 75 returned fields.
-- Connection watching could be disabled, and no diskutil activity child remained after quitting the test instance.
-- Read-only policy disclosed the distinction between DRC's metadata allowlist and unestablished system-wide/hardware write blocking.
-- The policy dialog moved keyboard focus into the dialog and closed with Escape in the final native build.
+- Own macOS window, production content at `tauri://localhost`, English interface and local session persistence.
+- Easy and Professional share the same session and source policy. Easy exposes inspection, imaging and exploration while retaining access to all original fields and command output.
+- Reference OS/profile switching, category/search filtering, custom keyboard-operable selector, independent pane scrolling and inert copy-only examples checked in the native window.
+- Protected personal media remain metadata-only; SMART, traversal and imaging admission are disabled. Discovery is independent of filesystem support.
+- Physical-source admission requires a positively external medium on macOS. Linux separately resolves non-system hardware backing, including secondary internal SATA/NVMe, excludes system/swap and mounted sources, and holds a read-only exclusive descriptor.
 
-No SMART query, filesystem mount/unmount, file traversal, sector scan, acquisition, self-test or write operation was run on the user's external media during these checks. The readings above describe this machine's test session, not fixed application demo data.
-
-## Remaining release work
-
-Raw acquisition with resume, filesystem extraction, persistent cases, privileged-helper design, dedicated test-device write operations, other host backends, telemetry instruments and distribution signing are separate implementation stages. Their absence is explicit in the application.
+No acquisition, sector scan, SMART self-test, filesystem traversal or destination write was performed on the owner's personal flash. The unavailable faulty Samsung SSD was not tested. Controlled userspace faults and loop-device tests do not validate electrical instability, damaged controllers/NAND, real reconnects or uninterruptible kernel reads. See [SSD resilience](SSD-RESILIENCE.md) for evidence and remaining boundaries.

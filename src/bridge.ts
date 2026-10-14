@@ -35,6 +35,7 @@ function request<T>(
 }
 
 export const bridge = {
+  hostEvidence: (kind: "topology" | "kernel") => request<QueryResult>("read_host_evidence", { kind }),
   discover: () => request<Discovery>("discover_devices"),
   tools: () => request<ToolReport[]>("installed_tools"),
   smart: (token: string) =>

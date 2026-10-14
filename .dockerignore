@@ -1,0 +1,11 @@
+.git
+node_modules
+dist
+.tools
+.cache
+src-tauri/target
+src-tauri/binaries
+DRC.app
+artifacts
+*.log
+.DS_Store

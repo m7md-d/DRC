@@ -165,6 +165,7 @@ export function Select({
         disabled={disabled}
         onKeyDown={key}
         onClick={() => {
+          trigger.current?.focus();
           setActive(selected);
           setOpen(!open);
         }}

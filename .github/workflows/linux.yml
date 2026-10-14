@@ -1,0 +1,63 @@
+name: Debian desktop packages
+on:
+  pull_request:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and test in Debian 12
+        run: docker build --file scripts/linux/Dockerfile --target artifacts --output type=local,dest=out .
+      - name: Verify clean Debian installation
+        run: docker build --file scripts/linux/Dockerfile --target install-check .
+      - name: Verify kernel claims on an owned generated image
+        run: |
+          sudo modprobe loop
+          docker build --file scripts/linux/Dockerfile --target kernel-tests --tag drc-kernel-tests .
+          docker run --rm --network none --read-only --tmpfs /tmp:rw,nosuid,nodev,noexec,size=64m --cap-add SYS_ADMIN --device /dev/loop-control --device-cgroup-rule 'b 7:* rwm' --security-opt apparmor=unconfined drc-kernel-tests > out/linux-kernel-results.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DRC-debian-${{ matrix.arch }}
+          path: out/*
+          if-no-files-found: error
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: DRC-debian-*
+          path: packages
+      - name: Collect packages and checksums
+        run: |
+          mkdir release
+          find packages -name '*.deb' -exec cp '{}' release/ \;
+          for arch in amd64 arm64; do
+            cp "packages/DRC-debian-$arch/linux-fault-results.json" "release/linux-fault-results-$arch.json"
+            cp "packages/DRC-debian-$arch/linux-kernel-results.json" "release/linux-kernel-results-$arch.json"
+          done
+          cp scripts/linux/install-debian.sh docs/LINUX-INSTALL.md release/
+          cd release
+          sha256sum *.deb > SHA256SUMS
+      - name: Publish tag release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" release/* --verify-tag --title "DRC $GITHUB_REF_NAME" --notes-file docs/RELEASE-NOTES.md

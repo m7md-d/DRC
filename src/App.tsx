@@ -36,6 +36,10 @@ import { AcquisitionPanel } from "./AcquisitionPanel";
 import { CommandTiming } from "./CommandTiming";
 import { PartitionChart } from "./PartitionChart";
 import { ImagePanel } from "./ImagePanel";
+import { EasyWorkspace } from "./EasyWorkspace";
+import { CheatSheet } from "./CheatSheet";
+import { HostEvidence } from "./HostEvidence";
+import { Modal } from "./Modal";
 
 const tabs: { key: Tab; label: string; icon: IconName }[] = [
   { key: "device", label: "Device", icon: "drive" },
@@ -98,7 +102,7 @@ function Partitions({ device }: { device: Device }) {
         <div>
           <h3>Partition layout</h3>
           <p className="source-label">
-            diskutil list -plist physical · {device.id}
+            {getField(device.info,"kname") ? "lsblk --json --bytes" : "diskutil list -plist physical"} · {device.id}
           </p>
         </div>
         <span className="count-tag">{device.partitions.length} entries</span>
@@ -121,12 +125,12 @@ function Partitions({ device }: { device: Device }) {
                 {device.partitions.map((partition, index) => (
                   <tr key={index}>
                     <td>
-                      {displayValue(getField(partition, "DeviceIdentifier"))}
+                      {displayValue(getField(partition, "DeviceIdentifier") ?? getField(partition, "kname"))}
                     </td>
-                    <td>{displayValue(getField(partition, "Content"))}</td>
-                    <td>{displayValue(getField(partition, "VolumeName"))}</td>
-                    <td>{displayValue(getField(partition, "Size"))}</td>
-                    <td>{displayValue(getField(partition, "MountPoint"))}</td>
+                    <td>{displayValue(getField(partition, "Content") ?? getField(partition, "fstype"))}</td>
+                    <td>{displayValue(getField(partition, "VolumeName") ?? getField(partition, "label"))}</td>
+                    <td>{displayValue(getField(partition, "Size") ?? getField(partition, "size"))}</td>
+                    <td>{displayValue(getField(partition, "MountPoint") ?? getField(partition, "mountpoints"))}</td>
                   </tr>
                 ))}
               </tbody>
@@ -244,7 +248,9 @@ function ConnectionView({
   result,
   busy,
   run,
+  platform = "macOS",
 }: {
+  platform?: string;
   result: QueryResult | null;
   busy: boolean;
   run: () => void;
@@ -254,7 +260,7 @@ function ConnectionView({
       <div className="section-heading">
         <div>
           <h3>Host connection report</h3>
-          <p className="source-label">USB and Thunderbolt · full host report</p>
+          <p className="source-label">USB / Thunderbolt · host-reported properties</p>
         </div>
         <button
           className="button primary"
@@ -268,7 +274,7 @@ function ConnectionView({
       <div className="connection-facts">
         <Fact
           label="DATA SOURCE"
-          value="System Profiler"
+          value={platform === "Linux" ? "sysfs / lsusb" : "System Profiler"}
           detail="USB / Thunderbolt registry information"
         />
         <Fact
@@ -305,8 +311,7 @@ function ConnectionView({
         </>
       ) : (
         <EmptyState icon="link" title="Connection report not collected">
-          Collect the host report to inspect every USB and Thunderbolt field
-          returned by macOS. No device reset or sector scan is performed.
+          Collect available host connection properties. No device reset or sector scan is performed.
         </EmptyState>
       )}
     </>
@@ -412,6 +417,15 @@ function ToolsView({
 }
 
 export function App() {
+  const [experience, setExperience] = useState<"easy" | "professional">(() => localStorage.getItem("drc.experience") === "professional" ? "professional" : "easy");
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
+  const closeEvidence = useCallback(() => setEvidenceOpen(false), []);
+  const [hostEvidence, setHostEvidence] = useState<Json[]>([]);
+  const [referenceOpen, setReferenceOpen] = useState(false);
+  const closeReference = useCallback(() => setReferenceOpen(false), []);
+  const [easyReading, setEasyReading] = useState<"smart" | "connection" | null>(null);
+  const closeEasyReading = useCallback(() => setEasyReading(null), []);
+  const changeExperience = (value: "easy" | "professional") => { setExperience(value); localStorage.setItem("drc.experience", value); };
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [originalImport, setOriginalImport] = useState<string | null>(null);
   const [archived, setArchived] = useState(false);
@@ -439,7 +453,7 @@ export function App() {
   const [terminalMode, setTerminalMode] = useState<"commands" | "events">(
     "commands",
   );
-  const [terminalCompact, setTerminalCompact] = useState(false);
+  const [terminalCompact, setTerminalCompact] = useState(experience === "easy");
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -571,6 +585,7 @@ export function App() {
           setSessionId(saved.id);
           setOriginalImport(saved.originalImport);
           setImageReports(saved.imageReports ?? []);
+          setHostEvidence(saved.hostEvidence ?? []);
           setRecords(saved.commandRecords);
           setEvents(saved.connectionEvents);
           setSmart(saved.smartReports);
@@ -723,6 +738,15 @@ export function App() {
     }
   }
 
+  async function collectHostEvidence(kind: "topology" | "kernel"): Promise<QueryResult> {
+    if (archivedRef.current) throw new Error("Return to the live session before collecting evidence.");
+    const activeData = acquiringRef.current || extractingRef.current;
+    if (kind === "kernel") return bridge.hostEvidence(kind);
+    if (busyRef.current || activeData) throw new Error("Wait for the active operation before collecting topology.");
+    busyRef.current = true; setBusy("Collecting host evidence");
+    try { return await bridge.hostEvidence(kind); } finally { busyRef.current=false; setBusy(null); if(pendingRefresh.current) void refreshRef.current(); }
+  }
+
   async function runConnection() {
     if (busyRef.current || acquiringRef.current || archivedRef.current) return;
     busyRef.current = true;
@@ -774,6 +798,7 @@ export function App() {
           id: sessionId,
           originalImport,
           imageReports,
+          hostEvidence,
           snapshot,
           smartReports: smart,
           connectionReport: connection,
@@ -792,6 +817,7 @@ export function App() {
     setSessionId(saved.id);
     setOriginalImport(saved.originalImport);
     setImageReports(saved.imageReports ?? []);
+          setHostEvidence(saved.hostEvidence ?? []);
     setSnapshot(saved.snapshot);
     setRecords(saved.commandRecords);
     setEvents(saved.connectionEvents);
@@ -857,12 +883,16 @@ export function App() {
           <span className="brand-name">DRC</span>
           <span className="brand-divider" />
           <span className="brand-subtitle">Disk Recovery Control</span>
-          <span className="version">0.3.1</span>
+          <span className="version">0.4.0</span>
         </div>
         <div className="header-actions">
+          <div className="mode-switch" aria-label="Workspace experience"><button aria-pressed={experience === "easy"} onClick={() => changeExperience("easy")}>Easy</button><button aria-pressed={experience === "professional"} onClick={() => changeExperience("professional")}>Professional</button></div>
+          <button className="button" onClick={() => setReferenceOpen(true)}><Icon name="file" />Reference</button>
+          {tools.some(t=>t.key === "lsblk") && <button className="button" disabled={!native || archived} onClick={() => setEvidenceOpen(true)}><Icon name="link"/>Host evidence</button>}
           <button
             className="button"
             disabled={!native || archived}
+            hidden={experience === "easy"}
             onClick={() => setImageOpen(true)}
           >
             <Icon name="file" />
@@ -871,6 +901,7 @@ export function App() {
           <button
             className="button"
             disabled={!native || archived}
+            hidden={experience === "easy"}
             onClick={() => setAcquisitionOpen(true)}
           >
             <Icon name="drive" />
@@ -889,7 +920,7 @@ export function App() {
             <span>Read-only policy</span>
             <span className="permission-code">r--</span>
           </button>
-          <button className="button" disabled={!snapshot} onClick={copySession}>
+          <button className="button" disabled={!snapshot} onClick={copySession} hidden={experience === "easy"}>
             <Icon name="copy" />
             Copy session JSON
           </button>
@@ -1058,7 +1089,7 @@ export function App() {
             </div>
           ))}
 
-          {device ? (
+          {experience === "easy" ? <EasyWorkspace device={device} smart={device ? smart[device.identityKey] : undefined} jobs={jobs} tools={tools} disabled={!!busy || !native || archived} inspect={() => { setEasyReading("smart"); void runSmart(); }} connections={() => { setEasyReading("connection"); void runConnection(); }} acquire={() => setAcquisitionOpen(true)} images={() => setImageOpen(true)} details={() => { changeExperience("professional"); setTab("device"); }} reference={() => setReferenceOpen(true)} /> : device ? (
             <>
               <div className="device-heading">
                 <div className="device-heading-icon">
@@ -1137,7 +1168,7 @@ export function App() {
                       <Fact
                         label="BUS PROTOCOL"
                         value={device.protocol ?? "Not reported"}
-                        detail="Reported by diskutil"
+                        detail={snapshot?.platform === "Linux" ? "Reported by lsblk" : "Reported by diskutil"}
                       />
                       <Fact
                         label="PARTITION SCHEME"
@@ -1147,14 +1178,14 @@ export function App() {
                       <Fact
                         label="LOGICAL BLOCK SIZE"
                         value={displayValue(
-                          getField(device.info, "DeviceBlockSize"),
+                          getField(device.info, "DeviceBlockSize") ?? getField(device.info, "log-sec"),
                         )}
                         detail="Original value · bytes"
                       />
                       <Fact
-                        label="OS MEDIA WRITABLE"
+                        label={snapshot?.platform === "Linux" ? "OS READ ONLY" : "OS MEDIA WRITABLE"}
                         value={displayValue(
-                          getField(device.info, "WritableMedia"),
+                          snapshot?.platform === "Linux" ? getField(device.info, "ro") : getField(device.info, "WritableMedia"),
                         )}
                         detail="Independent of DRC command policy"
                       />
@@ -1162,7 +1193,7 @@ export function App() {
                     <FieldTable
                       value={device.info}
                       grouping="device"
-                      source={`diskutil info -plist ${device.id} · exact numeric strings`}
+                      source={`${snapshot?.platform === "Linux" ? "lsblk / udev" : "diskutil info -plist"} ${device.id} · exact numeric strings`}
                       title="All device fields"
                       onCopy={() =>
                         void copy(
@@ -1197,6 +1228,7 @@ export function App() {
                 )}
                 {tab === "connection" && (
                   <ConnectionView
+                    platform={snapshot?.platform ?? (tools.some(t=>t.key === "lsblk") ? "Linux" : "macOS")}
                     result={connection}
                     busy={!!busy || archived}
                     run={() => void runConnection()}
@@ -1314,7 +1346,7 @@ export function App() {
           <span className="status-separator">/</span>
           <span>{records.length} commands</span>
           <span className="status-separator">/</span>
-          <span>DRC 0.3.1</span>
+          <span>DRC 0.4.0</span>
         </div>
       </footer>
       {notice && (
@@ -1364,9 +1396,9 @@ export function App() {
               <div>
                 <strong>System-wide write protection: not established</strong>
                 <p>
-                  Physical acquisition refuses mounted sources and holds a Disk
-                  Arbitration mount veto for the selected medium during the
-                  operation. DRC does not block all writes from other
+                  Physical acquisition refuses mounted sources. macOS holds a
+                  Disk Arbitration mount veto; Linux holds an exclusive read-only
+                  block-device handle during the operation. DRC does not block all writes from other
                   applications. Existing mounts are unchanged; hardware
                   write-blocker state is not verified.
                 </p>
@@ -1408,12 +1440,17 @@ export function App() {
       {acquisitionOpen && (
         <AcquisitionPanel
           device={device}
+          simple={experience === "easy"}
+          platform={snapshot?.platform ?? (tools.some(t=>t.key === "lsblk") ? "Linux" : "macOS")}
           jobs={jobs}
           busy={!!busy && !acquiringRef.current}
           close={closeAcquisition}
           started={updateJob}
         />
       )}
+      {evidenceOpen && <HostEvidence kernelAllowed={!archived} collectReport={collectHostEvidence} reports={hostEvidence} disabled={!!busy || archived} close={closeEvidence} onReport={report=>setHostEvidence(items=>[...items,report as unknown as Json])}/>}
+      {referenceOpen && <CheatSheet platform={snapshot?.platform ?? (tools.some(t=>t.key === "lsblk") ? "Linux" : "macOS")} close={closeReference} copy={text=>navigator.clipboard.writeText(text)} />}
+      {easyReading && <Modal title={easyReading === "smart" ? "Reported SMART / NVMe readings" : "Reported connection details"} subtitle="EXPLICIT QUERY / ORIGINAL FIELDS" close={closeEasyReading} wide className="readings-modal">{easyReading === "smart" && device ? <SmartView device={device} result={smart[device.identityKey]} busy={!!busy || archived} run={() => void runSmart()} /> : <ConnectionView platform={snapshot?.platform ?? (tools.some(t=>t.key === "lsblk") ? "Linux" : "macOS")} result={connection} busy={!!busy || archived} run={() => void runConnection()} />}</Modal>}
       {imageOpen && (
         <ImagePanel
           reports={imageReports}

@@ -71,7 +71,8 @@ int main(int argc,char **argv) {
     } else {
         TSK_FS_TYPE_ENUM type=TSK_FS_TYPE_DETECT;
         if (strcmp(argv[5],"auto")) type=tsk_fs_type_toid_utf8(argv[5]);
-        if (type==TSK_FS_TYPE_UNSUPP||type==TSK_FS_TYPE_LOGICAL) {fprintf(stderr,"Unsupported image filesystem backend\n");tsk_img_close(img);return 2;}
+        const char *type_name=tsk_fs_type_toname(type);
+        if (type==TSK_FS_TYPE_UNSUPP||(type_name&&(!strcmp(type_name,"logical")||!strcmp(type_name,"dir")))) {fprintf(stderr,"Unsupported image filesystem backend\n");tsk_img_close(img);return 2;}
         uint64_t start=offset*sectors;
         if (start>=static_cast<uint64_t>(status.st_size)) {tsk_img_close(img);return 2;}
         auto *fs=tsk_fs_open_img(img,static_cast<TSK_OFF_T>(start),type);
