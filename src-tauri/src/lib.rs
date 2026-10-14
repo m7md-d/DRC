@@ -151,7 +151,7 @@ async fn read_connections(
         .discovery
         .try_lock()
         .map_err(|_| "A metadata query is already running.")?;
-    let result = platform::backend().connections()?;
+    let result = platform::backend().connections(&mut |record| emit_record(&app, record))?;
     emit_record(&app, result.record.clone());
     app.state::<Arc<Store>>().append("connection", &result)?;
     Ok(result)
@@ -522,7 +522,7 @@ async fn export_session(
     admit_path(&app, &state, &parent, None, true)?;
     let store = app.state::<Arc<Store>>();
     let data = session_with_operations(&store, &id)?;
-    let export = serde_json::json!({"schemaVersion":"0.2","exportedAt":now_ms(),"applicationPolicy":"source-read-only","id":data.id,"createdAt":data.created_at,"updatedAt":data.updated_at,"snapshot":data.snapshot,"commandRecords":data.command_records,"connectionEvents":data.connection_events,"smartReports":data.smart_reports,"connectionReport":data.connection_report,"imageReports":data.image_reports,"originalImport":data.original_import});
+    let export = serde_json::json!({"schemaVersion":"0.2","exportedAt":now_ms(),"applicationPolicy":"source-read-only","id":data.id,"createdAt":data.created_at,"updatedAt":data.updated_at,"snapshot":data.snapshot,"commandRecords":data.command_records,"connectionEvents":data.connection_events,"smartReports":data.smart_reports,"connectionReport":data.connection_report,"imageReports":data.image_reports,"hostEvidence":data.host_evidence,"originalImport":data.original_import});
     use std::io::Write;
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);

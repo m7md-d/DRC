@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { bridge, native } from "./bridge";
 import { FieldTable } from "./FieldTable";
 import { ArtifactPreview } from "./ArtifactPreview";
+import { ByteValue } from "./ByteValue";
 import { commandLine, humanBytes, timestamp } from "./data";
 import type { ExtractionJob, ExtractionPlan, Json } from "./types";
 
@@ -234,7 +235,7 @@ export function ExtractionPanel({
               <summary>
                 <span>{item.filename}</span>
                 <span>
-                  {item.state} · {item.writtenBytes} / {item.maximumBytes} bytes
+                  {item.state} · <ByteValue value={item.writtenBytes}/> / <ByteValue value={item.maximumBytes}/>
                 </span>
               </summary>
               <FieldTable

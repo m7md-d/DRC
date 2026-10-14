@@ -5,7 +5,8 @@ import { Icon } from "./Icon";
 import { FieldTable } from "./FieldTable";
 import { Select } from "./Select";
 import { AcquisitionCharts } from "./AcquisitionCharts";
-import { humanBytes, commandLine, canAcquireDevice } from "./data";
+import { ByteValue } from "./ByteValue";
+import { commandLine, canAcquireDevice } from "./data";
 import type {
   AcquisitionJob,
   AcquisitionPlan,
@@ -138,13 +139,13 @@ export function AcquisitionPanel({
                 <span className="eyebrow">READ-ONLY SOURCE</span>
                 <code>{sourceLabel(plan.source, platform)}</code>
                 <span>
-                  {plan.sourceSize} bytes · {humanBytes(plan.sourceSize)}
+                  <ByteValue value={plan.sourceSize}/>
                 </span>
               </div>
               <div className="review-fact">
                 <span className="eyebrow">DESTINATION FOLDER</span>
                 <code>{plan.destinationDirectory}</code>
-                <span>{plan.freeBytes} bytes available</span>
+                <span><ByteValue value={plan.freeBytes}/> available</span>
               </div>
               <div className="review-fact">
                 <span className="eyebrow">
@@ -286,7 +287,7 @@ export function AcquisitionPanel({
                     /dev/{platform === "macOS" ? "r" : ""}{device?.id} · {device?.name}
                   </code>
                   <span>
-                    {device?.sizeBytes} bytes · observed descriptor, not unique
+                    <ByteValue value={device?.sizeBytes}/> · observed descriptor, not unique
                     hardware identification
                   </span>
                 </div>
@@ -600,7 +601,7 @@ export function AcquisitionPanel({
                     ).map(([label, n]) => (
                       <div key={label}>
                         <span>{label}</span>
-                        <code>{n} bytes</code>
+                        <ByteValue value={n}/>
                       </div>
                     ))}
                   </div>

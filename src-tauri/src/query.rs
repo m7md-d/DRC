@@ -18,6 +18,7 @@ pub enum ReadQuery {
     LinuxKernel,
     DeviceInfo(String),
     Connections,
+    UsbRegistry,
     SmartInfo { executable: String, device: String },
 }
 
@@ -81,6 +82,10 @@ impl ReadQuery {
                     "SPUSBDataType".into(),
                     "SPThunderboltDataType".into(),
                 ],
+            ),
+            Self::UsbRegistry => (
+                "/usr/sbin/ioreg".into(),
+                vec!["-a".into(), "-p".into(), "IOUSB".into(), "-l".into()],
             ),
             Self::SmartInfo { executable, device }
                 if (if cfg!(target_os = "linux") {

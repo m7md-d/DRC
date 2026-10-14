@@ -16,8 +16,8 @@
         "title": "DRC \u2014 Disk Recovery Control",
         "width": 1460,
         "height": 980,
-        "minWidth": 1050,
-        "minHeight": 700,
+        "minWidth": 640,
+        "minHeight": 540,
         "backgroundColor": "#090B0D"
       }
     ],
