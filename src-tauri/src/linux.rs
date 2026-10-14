@@ -176,7 +176,7 @@ impl PlatformBackend for LinuxBackend {
             warnings: vec![],
         })
     }
-    fn connections(&self) -> Result<QueryResult, String> {
+    fn connections(&self, _sink: &mut dyn FnMut(CommandRecord)) -> Result<QueryResult, String> {
         let record = query::execute(ReadQuery::LinuxConnections)?;
         let mut devices = Vec::new();
         if let Ok(entries) = std::fs::read_dir("/sys/bus/usb/devices") {
@@ -186,6 +186,12 @@ impl PlatformBackend for LinuxBackend {
                     "sysfsName".into(),
                     Value::String(entry.file_name().to_string_lossy().into_owned()),
                 );
+                if let Ok(path) = entry.path().canonicalize() {
+                    fields.insert("sysfsPath".into(), Value::String(path.to_string_lossy().into_owned()));
+                    if let Some(parent) = path.parent().and_then(Path::file_name) {
+                        fields.insert("parentSysfsName".into(), Value::String(parent.to_string_lossy().into_owned()));
+                    }
+                }
                 for key in [
                     "idVendor",
                     "idProduct",
@@ -197,6 +203,11 @@ impl PlatformBackend for LinuxBackend {
                     "bcdUSB",
                     "busnum",
                     "devnum",
+                    "devpath",
+                    "bDeviceClass",
+                    "bNumInterfaces",
+                    "bNumConfigurations",
+                    "maxchild",
                     "authorized",
                     "power/runtime_status",
                     "power/control",
@@ -218,6 +229,12 @@ impl PlatformBackend for LinuxBackend {
                     "sysfsName".into(),
                     Value::String(entry.file_name().to_string_lossy().into_owned()),
                 );
+                if let Ok(path) = entry.path().canonicalize() {
+                    fields.insert("sysfsPath".into(), Value::String(path.to_string_lossy().into_owned()));
+                    if let Some(parent) = path.parent().and_then(Path::file_name) {
+                        fields.insert("parentSysfsName".into(), Value::String(parent.to_string_lossy().into_owned()));
+                    }
+                }
                 for key in [
                     "vendor_name",
                     "device_name",

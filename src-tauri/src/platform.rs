@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 pub trait PlatformBackend: Send + Sync {
     fn discover(&self, record: &mut dyn FnMut(CommandRecord)) -> Result<Discovery, String>;
-    fn connections(&self) -> Result<QueryResult, String>;
+    fn connections(&self, record: &mut dyn FnMut(CommandRecord)) -> Result<QueryResult, String>;
     fn smart(
         &self,
         device: &Device,
@@ -153,13 +153,25 @@ impl PlatformBackend for MacOsBackend {
         })
     }
 
-    fn connections(&self) -> Result<QueryResult, String> {
+    fn connections(&self, sink: &mut dyn FnMut(CommandRecord)) -> Result<QueryResult, String> {
         let record = execute(ReadQuery::Connections)?;
         let parsed = serde_json::from_str::<Value>(&record.stdout).map(exact_json);
-        let (fields, parse_error) = match parsed {
+        let (mut fields, parse_error) = match parsed {
             Ok(fields) => (Some(fields), None),
             Err(error) => (None, Some(error.to_string())),
         };
+        let registry = execute(ReadQuery::UsbRegistry)?;
+        let parsed_registry = successful_plist(&registry);
+        let (properties, registry_error) = match parsed_registry {
+            Ok(value) => (Some(value), None),
+            Err(error) => (None, Some(error)),
+        };
+        let report = serde_json::json!({"fields":properties,"parseError":registry_error,"record":registry});
+        if fields.as_ref().is_none_or(|value| !value.is_object()) {
+            fields = Some(serde_json::json!({"SystemProfilerOriginal":fields}));
+        }
+        fields.as_mut().unwrap()["IORegistryUSBReport"] = report;
+        sink(registry);
         Ok(QueryResult {
             record,
             fields,

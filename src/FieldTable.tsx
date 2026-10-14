@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type { Json } from "./types";
 import { displayValue, flatten } from "./data";
+import { ByteValue, isByteField } from "./ByteValue";
 import { Icon } from "./Icon";
 import { groupFields } from "./fieldGroups";
 
@@ -25,7 +26,7 @@ export function FieldTable({
   const visible = useMemo(
     () =>
       fields.filter((field) =>
-        `${field.path} ${displayValue(field.value)}`
+        `${field.path} ${isByteField(field.path, field.value) ? <ByteValue value={field.value}/> : displayValue(field.value)}`
           .toLowerCase()
           .includes(filter.toLowerCase()),
       ),
@@ -46,7 +47,7 @@ export function FieldTable({
             <tr key={field.path}>
               <td>{field.path}</td>
               <td className={field.value === null ? "muted" : ""}>
-                {displayValue(field.value)}
+                {isByteField(field.path, field.value) ? <ByteValue value={field.value}/> : displayValue(field.value)}
               </td>
             </tr>
           ))}

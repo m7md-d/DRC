@@ -1,4 +1,5 @@
-import { getField, displayValue, humanBytes } from "./data";
+import { ByteValue } from "./ByteValue";
+import { getField, displayValue } from "./data";
 import type { Device } from "./types";
 
 const colors = [
@@ -35,7 +36,7 @@ export function PartitionChart({ device }: { device: Device }) {
       <div className="plot-heading">
         <h4>Reported capacity distribution</h4>
         <span>
-          {humanBytes(device.sizeBytes)} · {device.sizeBytes} bytes
+          <ByteValue value={device.sizeBytes}/>
         </span>
       </div>
       <div
@@ -67,14 +68,14 @@ export function PartitionChart({ device }: { device: Device }) {
             <i style={{ background: colors[p.index % colors.length] }} />
             <code>{p.label}</code>
             <span>{p.name}</span>
-            <code>{p.size as string} bytes</code>
+            <ByteValue value={p.size as string}/>
           </div>
         ))}
         {sum < total && (
           <div>
             <i className="capacity-remainder" />
             <span>Outside listed entries</span>
-            <code>{String(total - sum)} bytes</code>
+            <ByteValue value={String(total-sum)}/>
           </div>
         )}
       </div>

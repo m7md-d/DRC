@@ -5,6 +5,7 @@ import { Modal } from "./Modal";
 import { Icon } from "./Icon";
 import { Select } from "./Select";
 import { FieldTable } from "./FieldTable";
+import { ByteValue } from "./ByteValue";
 import { commandLine, humanBytes, timestamp } from "./data";
 import type {
   ExtractionJob,
@@ -651,7 +652,7 @@ export function ImagePanel({
                           <th>ADDRESS</th>
                           <th>TYPE</th>
                           <th>DELETED</th>
-                          <th>SIZE · BYTES</th>
+                          <th>SIZE</th>
                           <th />
                         </tr>
                       </thead>
@@ -694,7 +695,7 @@ export function ImagePanel({
                             <td>{file.inode}</td>
                             <td>{file.kind}</td>
                             <td>{String(file.deleted)}</td>
-                            <td>{file.size}</td>
+                            <td><ByteValue value={file.size}/></td>
                             <td>
                               {["d", "V"].includes(file.kind[0]) && (
                                 <button

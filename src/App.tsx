@@ -24,7 +24,6 @@ import {
   displayValue,
   flatten,
   getField,
-  humanBytes,
   smartStatus,
   timestamp,
 } from "./data";
@@ -40,6 +39,9 @@ import { EasyWorkspace } from "./EasyWorkspace";
 import { CheatSheet } from "./CheatSheet";
 import { HostEvidence } from "./HostEvidence";
 import { Modal } from "./Modal";
+import { ByteValue } from "./ByteValue";
+import { Hints } from "./Hints";
+import { PortTree } from "./PortTree";
 
 const tabs: { key: Tab; label: string; icon: IconName }[] = [
   { key: "device", label: "Device", icon: "drive" },
@@ -117,7 +119,7 @@ function Partitions({ device }: { device: Device }) {
                   <th>DEVICE</th>
                   <th>CONTENT</th>
                   <th>VOLUME NAME</th>
-                  <th>SIZE · EXACT BYTES</th>
+                  <th>SIZE</th>
                   <th>MOUNT POINT</th>
                 </tr>
               </thead>
@@ -129,7 +131,7 @@ function Partitions({ device }: { device: Device }) {
                     </td>
                     <td>{displayValue(getField(partition, "Content") ?? getField(partition, "fstype"))}</td>
                     <td>{displayValue(getField(partition, "VolumeName") ?? getField(partition, "label"))}</td>
-                    <td>{displayValue(getField(partition, "Size") ?? getField(partition, "size"))}</td>
+                    <td><ByteValue value={getField(partition, "Size") ?? getField(partition, "size")}/></td>
                     <td>{displayValue(getField(partition, "MountPoint") ?? getField(partition, "mountpoints"))}</td>
                   </tr>
                 ))}
@@ -249,7 +251,9 @@ function ConnectionView({
   busy,
   run,
   platform = "macOS",
+  devices = [],
 }: {
+  devices?: Device[];
   platform?: string;
   result: QueryResult | null;
   busy: boolean;
@@ -301,13 +305,8 @@ function ConnectionView({
               the transcript.
             </div>
           )}
-          {result.fields !== null && (
-            <FieldTable
-              value={result.fields}
-              source={`${commandLine(result.record)} · ${timestamp(result.record.startedAt)}`}
-              title="Complete connection fields"
-            />
-          )}
+          <PortTree report={result} devices={devices}/>
+          {result.fields !== null && <details className="port-properties"><summary>Complete original connection report</summary><FieldTable value={result.fields} source={`${commandLine(result.record)} · ${timestamp(result.record.startedAt)}`} title="Complete connection fields"/></details>}
         </>
       ) : (
         <EmptyState icon="link" title="Connection report not collected">
@@ -874,7 +873,8 @@ export function App() {
   ];
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell experience-${experience}`}>
+      <Hints/>
       <header className="app-header">
         <div className="brand">
           <span className="brand-mark">
@@ -888,6 +888,7 @@ export function App() {
         <div className="header-actions">
           <div className="mode-switch" aria-label="Workspace experience"><button aria-pressed={experience === "easy"} onClick={() => changeExperience("easy")}>Easy</button><button aria-pressed={experience === "professional"} onClick={() => changeExperience("professional")}>Professional</button></div>
           <button className="button" onClick={() => setReferenceOpen(true)}><Icon name="file" />Reference</button>
+          <button className="button" data-hint="Open the visual USB, hub and enclosure hierarchy. Collects host metadata only when no report is saved." onClick={() => { setEasyReading("connection"); if (!connection && !archived) void runConnection(); }}><Icon name="hub"/>Port map</button>
           {tools.some(t=>t.key === "lsblk") && <button className="button" disabled={!native || archived} onClick={() => setEvidenceOpen(true)}><Icon name="link"/>Host evidence</button>}
           <button
             className="button"
@@ -976,7 +977,7 @@ export function App() {
                           </span>
                           <span className="device-meta">
                             {item.id} <span>·</span>{" "}
-                            {humanBytes(item.sizeBytes)}
+                            <ByteValue value={item.sizeBytes}/>
                           </span>
                           <span className="device-protocol">
                             {item.protocol ?? "Protocol not reported"}
@@ -1125,11 +1126,9 @@ export function App() {
                   </div>
                 </div>
                 <div className="device-heading-capacity">
-                  <strong>{humanBytes(device.sizeBytes)}</strong>
+                  <strong><ByteValue value={device.sizeBytes}/></strong>
                   <span>
-                    {device.sizeBytes
-                      ? `${device.sizeBytes} bytes`
-                      : "Exact capacity not reported"}
+                    Hover or focus for exact bytes
                   </span>
                 </div>
               </div>
@@ -1228,6 +1227,7 @@ export function App() {
                 )}
                 {tab === "connection" && (
                   <ConnectionView
+                    devices={snapshot?.devices ?? []}
                     platform={snapshot?.platform ?? (tools.some(t=>t.key === "lsblk") ? "Linux" : "macOS")}
                     result={connection}
                     busy={!!busy || archived}
@@ -1450,7 +1450,7 @@ export function App() {
       )}
       {evidenceOpen && <HostEvidence kernelAllowed={!archived} collectReport={collectHostEvidence} reports={hostEvidence} disabled={!!busy || archived} close={closeEvidence} onReport={report=>setHostEvidence(items=>[...items,report as unknown as Json])}/>}
       {referenceOpen && <CheatSheet platform={snapshot?.platform ?? (tools.some(t=>t.key === "lsblk") ? "Linux" : "macOS")} close={closeReference} copy={text=>navigator.clipboard.writeText(text)} />}
-      {easyReading && <Modal title={easyReading === "smart" ? "Reported SMART / NVMe readings" : "Reported connection details"} subtitle="EXPLICIT QUERY / ORIGINAL FIELDS" close={closeEasyReading} wide className="readings-modal">{easyReading === "smart" && device ? <SmartView device={device} result={smart[device.identityKey]} busy={!!busy || archived} run={() => void runSmart()} /> : <ConnectionView platform={snapshot?.platform ?? (tools.some(t=>t.key === "lsblk") ? "Linux" : "macOS")} result={connection} busy={!!busy || archived} run={() => void runConnection()} />}</Modal>}
+      {easyReading && <Modal title={easyReading === "smart" ? "Reported SMART / NVMe readings" : "Reported connection details"} subtitle="EXPLICIT QUERY / ORIGINAL FIELDS" close={closeEasyReading} wide className="readings-modal">{easyReading === "smart" && device ? <SmartView device={device} result={smart[device.identityKey]} busy={!!busy || archived} run={() => void runSmart()} /> : <ConnectionView devices={snapshot?.devices ?? []} platform={snapshot?.platform ?? (tools.some(t=>t.key === "lsblk") ? "Linux" : "macOS")} result={connection} busy={!!busy || archived} run={() => void runConnection()} />}</Modal>}
       {imageOpen && (
         <ImagePanel
           reports={imageReports}
