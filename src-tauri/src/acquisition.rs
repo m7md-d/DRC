@@ -802,20 +802,30 @@ fn run(
             policy::open_readonly(Path::new(&job.image_path))?
                 .sync_all()
                 .map_err(|e| e.to_string())?;
-            if update_artifacts(job) {
+            let fresh_artifacts = update_artifacts(job);
+            if fresh_artifacts {
                 sample_progress(job, started.elapsed().as_millis() as u64);
             }
             update_rates(job, false);
+            if !fresh_artifacts {
+                return Err("The final mapfile and original image destination could not be verified. Previous observations cannot establish completion.".into());
+            }
+            if record.exit_code == Some(0)
+                && !job
+                    .image_identity
+                    .as_ref()
+                    .is_some_and(|image| image.size == job.source_size)
+            {
+                job.map_digest = None;
+                return Err("The output image length differs from the reviewed source capacity. Completion and resume are blocked; the map alone cannot verify the image.".into());
+            }
             if let Source::Image { identity, .. } = &job.source {
                 if &policy::file_identity(&input)? != identity {
                     return Err("The source image changed during acquisition. The output cannot be marked complete.".into());
                 }
             }
             job.exit_code = record.exit_code;
-            let complete = job
-                .map
-                .as_ref()
-                .is_some_and(|m| m.rescued_bytes == m.domain_bytes);
+            let complete = completion_verified(job, fresh_artifacts);
             job.state = if complete && record.exit_code == Some(0) {
                 "completed"
             } else if signalled && job.map_digest.is_some() {
@@ -916,36 +926,94 @@ fn update_record(record: &mut CommandRecord, job: &Job) {
     }
 }
 
+/// A completed requested range requires a fresh valid map and the exact
+/// extended output length. This does not establish the source's true nominal
+/// capacity, the correctness of successful device responses, or full-disk scope.
+fn completion_verified(job: &Job, fresh: bool) -> bool {
+    fresh
+        && job
+            .map
+            .as_ref()
+            .is_some_and(|map| map.rescued_bytes == map.domain_bytes)
+        && job
+            .image_identity
+            .as_ref()
+            .is_some_and(|image| image.size == job.source_size)
+}
 fn update_artifacts(job: &mut Job) -> bool {
-    if !policy::path_identity(Path::new(&job.directory)).is_ok_and(|d| {
-        d.device == job.directory_identity.device && d.inode == job.directory_identity.inode
-    }) {
-        job.message =
-            Some("Acquisition directory identity changed; artifact reads are blocked.".into());
-        return false;
-    }
-    let mut observed = false;
-    if let Ok(bytes) = read_regular(Path::new(&job.map_path)) {
-        match parse_map(&bytes, &job.settings, &job.source_size) {
-            Ok(map) => {
-                observed = true;
-                job.map = Some(map);
-                job.map_digest = Some(policy::digest(&bytes));
-            }
-            Err(error) => {
-                job.message = Some(format!(
-                    "Mapfile parse error; original bytes retained: {error}"
-                ));
-                job.map = None;
-                job.map_digest = None;
+    let observation = (|| -> Result<(MapSummary, String, FileIdentity), String> {
+        let current = policy::path_identity(Path::new(&job.directory))?;
+        if current.device != job.directory_identity.device
+            || current.inode != job.directory_identity.inode
+        {
+            return Err(
+                "Acquisition directory identity changed; artifact reads are blocked.".into(),
+            );
+        }
+        let image = policy::open_readonly(Path::new(&job.image_path))?;
+        if !image.metadata().map_err(|e| e.to_string())?.is_file() {
+            return Err("The image destination is not a regular file.".into());
+        }
+        // Read the map before sampling image metadata. During a live copy,
+        // the output can grow between these observations; an older image length
+        // must not be compared with a newer completed-map frontier.
+        let bytes = read_regular(Path::new(&job.map_path))?;
+        let map = parse_map(&bytes, &job.settings, &job.source_size)?;
+        let identity = policy::file_identity(&image)?;
+        let previous = job
+            .image_identity
+            .as_ref()
+            .ok_or("No original image destination identity was recorded.")?;
+        if identity.device != previous.device || identity.inode != previous.inode {
+            return Err("The original image destination was replaced.".into());
+        }
+        if decimal(&identity.size, "Current image size")?
+            < decimal(&previous.size, "Previously observed image size")?
+        {
+            return Err("The image destination was truncated after data had been recorded.".into());
+        }
+        let start = decimal(&job.settings.offset, "Domain offset")?;
+        let end = start
+            .checked_add(decimal(
+                job.settings
+                    .length
+                    .as_deref()
+                    .ok_or("Domain length missing")?,
+                "Domain length",
+            )?)
+            .ok_or("Domain overflow")?;
+        let mut required_length = 0;
+        for block in &map.blocks {
+            let position = decimal(&block.position, "Map position")?;
+            let block_end = position
+                .checked_add(decimal(&block.size, "Map size")?)
+                .ok_or("Map end overflow")?;
+            if block.status == "+" && position < end && block_end > start {
+                required_length = required_length.max(block_end.min(end));
             }
         }
-    }
-    if let Ok(file) = policy::open_readonly(Path::new(&job.image_path)) {
-        job.image_identity = policy::file_identity(&file).ok();
-    }
+        if decimal(&identity.size, "Image size")? < required_length {
+            return Err("The map marks copied bytes beyond the current image's length. Completion and resume cannot be verified.".into());
+        }
+        Ok((map, policy::digest(&bytes), identity))
+    })();
     job.updated_at = now_ms();
-    observed
+    match observation {
+        Ok((map, digest, identity)) => {
+            job.map = Some(map);
+            job.map_digest = Some(digest);
+            job.image_identity = Some(identity);
+            true
+        }
+        Err(error) => {
+            // Preserve the last bound image identity for strict resume admission,
+            // but never reuse an old map as a fresh completion observation.
+            job.map = None;
+            job.map_digest = None;
+            job.message = Some(format!("Acquisition artifact verification failed: {error}"));
+            false
+        }
+    }
 }
 
 fn update_rates(job: &mut Job, live: bool) {
@@ -1366,6 +1434,167 @@ mod tests {
         drop(image);
         drop(manager);
         drop(store);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    fn artifact_fixture(image_length: usize, map: &str) -> (std::path::PathBuf, Job) {
+        let root = std::env::temp_dir().join(crate::model::unique_id("drc-artifact-test"));
+        std::fs::create_dir(&root).unwrap();
+        let source_path = root.join("source.img");
+        std::fs::write(&source_path, vec![7; 1024]).unwrap();
+        let image_path = root.join("image.raw");
+        std::fs::write(&image_path, vec![7; image_length]).unwrap();
+        let map_path = root.join("rescue.map");
+        std::fs::write(&map_path, map).unwrap();
+        let job = Job {
+            id: "fixture".into(),
+            session_id: "fixture".into(),
+            source: Source::Image {
+                path: source_path.to_string_lossy().into_owned(),
+                identity: policy::path_identity(&source_path).unwrap(),
+            },
+            source_size: "1024".into(),
+            directory: root.to_string_lossy().into_owned(),
+            directory_identity: policy::path_identity(&root).unwrap(),
+            image_path: image_path.to_string_lossy().into_owned(),
+            map_path: map_path.to_string_lossy().into_owned(),
+            stdout_path: root.join("stdout.bin").to_string_lossy().into_owned(),
+            stderr_path: root.join("stderr.bin").to_string_lossy().into_owned(),
+            settings: settings(),
+            state: "running".into(),
+            created_at: now_ms(),
+            updated_at: now_ms(),
+            exit_code: None,
+            message: None,
+            map: None,
+            image_identity: Some(policy::path_identity(&image_path).unwrap()),
+            map_digest: None,
+            attempts: 1,
+            tool_version: "fixture".into(),
+            latest_record: None,
+            rate_reports: vec![],
+            progress_reports: vec![],
+        };
+        (root, job)
+    }
+    #[test]
+    fn missing_or_replaced_artifacts_never_reuse_a_cached_complete_map() {
+        let (root, mut job) = artifact_fixture(1024, "0 + 1\n0 1024 +\n");
+        assert!(update_artifacts(&mut job));
+        assert!(completion_verified(&job, true));
+        let original = job.image_identity.clone().unwrap();
+        std::fs::remove_file(&job.map_path).unwrap();
+        assert!(!update_artifacts(&mut job));
+        assert!(job.map.is_none() && job.map_digest.is_none());
+        assert!(!completion_verified(&job, true));
+        std::fs::write(&job.map_path, "0 + 1\n0 1024 +\n").unwrap();
+        assert!(update_artifacts(&mut job));
+        std::fs::rename(&job.image_path, root.join("original.raw")).unwrap();
+        std::fs::write(&job.image_path, vec![0; 1024]).unwrap();
+        assert!(!update_artifacts(&mut job));
+        assert_eq!(job.image_identity, Some(original));
+        assert!(!completion_verified(&job, true));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn truncated_or_short_images_cannot_satisfy_finished_map_regions() {
+        let (root, mut job) = artifact_fixture(1024, "0 + 1\n0 1024 +\n");
+        assert!(update_artifacts(&mut job));
+        std::fs::write(&job.image_path, vec![7; 512]).unwrap();
+        assert!(!update_artifacts(&mut job));
+        assert!(!completion_verified(&job, true));
+        std::fs::remove_dir_all(root).unwrap();
+        let (root, mut job) = artifact_fixture(512, "0 + 1\n0 1024 +\n");
+        assert!(!update_artifacts(&mut job));
+        assert!(job.map_digest.is_none());
+        std::fs::remove_dir_all(root).unwrap();
+        let (root, mut job) = artifact_fixture(512, "0 ? 1\n0 512 +\n512 512 ?\n");
+        assert!(update_artifacts(&mut job));
+        assert!(!completion_verified(&job, true));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn actual_ddrescue_simulated_read_errors_preserve_partial_data_and_resume_only_remaining_ranges(
+    ) {
+        // GNU's test mode simulates EIO on ordinary generated files. This never
+        // enumerates or accesses a physical device, including the personal flash.
+        let root = std::env::temp_dir().join(crate::model::unique_id("drc-simulated-eio"));
+        std::fs::create_dir(&root).unwrap();
+        let length = 2 * 1024 * 1024usize;
+        let bytes: Vec<u8> = (0..length).map(|i| ((i % 251) + 1) as u8).collect();
+        let source = root.join("source.img");
+        std::fs::write(&source, &bytes).unwrap();
+        let domain = root.join("simulated-errors.map");
+        let bad_start = 65536usize;
+        let bad_size = 16384usize;
+        let bad_end = bad_start + bad_size;
+        std::fs::write(
+            &domain,
+            format!(
+                "0 ? 1\n0 {bad_start} +\n{bad_start} {bad_size} -\n{bad_end} {} +\n",
+                length - bad_end
+            ),
+        )
+        .unwrap();
+        let image = root.join("image.raw");
+        let map = root.join("rescue.map");
+        let mut config = settings();
+        config.length = Some(length.to_string());
+        let run_test = |config: &Settings, attempt: u32| {
+            let arguments = arguments(
+                config,
+                &length.to_string(),
+                source.to_str().unwrap(),
+                image.to_str().unwrap(),
+                map.to_str().unwrap(),
+                root.join(format!("rates-{attempt}.log")).to_str().unwrap(),
+            );
+            Command::new(executable().unwrap())
+                .arg(format!("--test-mode={}", domain.display()))
+                .args(arguments)
+                .stdin(Stdio::null())
+                .output()
+                .unwrap()
+        };
+        let first = run_test(&config, 1);
+        assert!(
+            first.status.success(),
+            "{}",
+            String::from_utf8_lossy(&first.stderr)
+        );
+        let report =
+            parse_map(&std::fs::read(&map).unwrap(), &config, &length.to_string()).unwrap();
+        assert_ne!(report.rescued_bytes, report.domain_bytes);
+        assert_eq!(
+            report.bad_sector_bytes, "0",
+            "Copying-only errors need not yet be classified as bad sectors"
+        );
+        assert!(report.non_trimmed_bytes.parse::<u64>().unwrap() > 0);
+        assert_eq!(
+            std::fs::metadata(&image).unwrap().len(),
+            length as u64,
+            "Image length alone does not establish completeness"
+        );
+        let partial = std::fs::read(&image).unwrap();
+        for block in report.blocks.iter().filter(|b| b.status == "+") {
+            let start = block.position.parse::<usize>().unwrap();
+            let end = start + block.size.parse::<usize>().unwrap();
+            assert_eq!(partial[start..end], bytes[start..end]);
+        }
+        assert!(partial[bad_start..bad_end].iter().all(|b| *b == 0));
+        std::fs::write(&domain, format!("0 + 1\n0 {length} +\n")).unwrap();
+        config.copying_only = false;
+        config.retry_passes = 1;
+        let second = run_test(&config, 2);
+        assert!(
+            second.status.success(),
+            "{}",
+            String::from_utf8_lossy(&second.stderr)
+        );
+        let report =
+            parse_map(&std::fs::read(&map).unwrap(), &config, &length.to_string()).unwrap();
+        assert_eq!(report.rescued_bytes, report.domain_bytes);
+        assert_eq!(std::fs::read(&image).unwrap(), bytes);
+        assert_eq!(std::fs::read(&source).unwrap(), bytes);
         std::fs::remove_dir_all(root).unwrap();
     }
 }
