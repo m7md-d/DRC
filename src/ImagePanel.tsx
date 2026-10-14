@@ -6,7 +6,7 @@ import { Icon } from "./Icon";
 import { Select } from "./Select";
 import { FieldTable } from "./FieldTable";
 import { ByteValue } from "./ByteValue";
-import { commandLine, humanBytes, timestamp } from "./data";
+import { commandLine, timestamp } from "./data";
 import type {
   ExtractionJob,
   ImageAction,
@@ -228,8 +228,7 @@ export function ImagePanel({
             <div className="review-fact">
               <code>{source.path}</code>
               <span>
-                {humanBytes(source.identity.size)} · {source.identity.size}{" "}
-                bytes
+                <ByteValue value={source.identity.size}/>
               </span>
               <span>
                 Opened {timestamp(source.openedAt)} · source handle read only

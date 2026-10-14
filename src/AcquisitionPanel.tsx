@@ -152,11 +152,11 @@ export function AcquisitionPanel({
                   REQUESTED RANGE / ORIGINAL OFFSETS RETAINED
                 </span>
                 <code>
-                  {plan.settings.offset} + {plan.settings.length} bytes
+                  <ByteValue value={plan.settings.offset}/> + <ByteValue value={plan.settings.length}/>
                 </code>
                 <span>
                   The image retains source byte offsets and extends to{" "}
-                  {plan.sourceSize} bytes. Mapfile gaps identify unread data.
+                  <ByteValue value={plan.sourceSize}/>. Mapfile gaps identify unread data.
                 </span>
               </div>
               <FieldTable

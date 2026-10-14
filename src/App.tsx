@@ -251,9 +251,7 @@ function ConnectionView({
   busy,
   run,
   platform = "macOS",
-  devices = [],
 }: {
-  devices?: Device[];
   platform?: string;
   result: QueryResult | null;
   busy: boolean;
@@ -264,7 +262,7 @@ function ConnectionView({
       <div className="section-heading">
         <div>
           <h3>Host connection report</h3>
-          <p className="source-label">USB / Thunderbolt · host-reported properties</p>
+          <p className="source-label">USB / Thunderbolt / NVMe · host-reported properties</p>
         </div>
         <button
           className="button primary"
@@ -272,31 +270,10 @@ function ConnectionView({
           onClick={run}
         >
           <Icon name="refresh" />
-          Collect report
+          Refresh port map
         </button>
       </div>
-      <div className="connection-facts">
-        <Fact
-          label="DATA SOURCE"
-          value={platform === "Linux" ? "sysfs / lsusb" : "System Profiler"}
-          detail="USB / Thunderbolt registry information"
-        />
-        <Fact
-          label="CURRENT MEASUREMENT"
-          value="Unavailable"
-          detail="Telemetry adapter not implemented"
-        />
-        <Fact
-          label="DEVICE MAPPING"
-          value="Host-wide report"
-          detail="No automatic association with selected media"
-        />
-      </div>
-      <div className="inline-note">
-        <Icon name="info" />
-        Reported USB current requirements are declared metadata, not a
-        measurement of current draw.
-      </div>
+      <p className="source-label">{platform === "Linux" ? "lsusb / sysfs" : "System Profiler / IORegistry"} · reported hierarchy and properties · actual electrical current is not measured</p>
       {result ? (
         <>
           {result.parseError && (
@@ -305,7 +282,7 @@ function ConnectionView({
               the transcript.
             </div>
           )}
-          <PortTree report={result} devices={devices}/>
+          <PortTree report={result}/>
           {result.fields !== null && <details className="port-properties"><summary>Complete original connection report</summary><FieldTable value={result.fields} source={`${commandLine(result.record)} · ${timestamp(result.record.startedAt)}`} title="Complete connection fields"/></details>}
         </>
       ) : (
@@ -883,7 +860,7 @@ export function App() {
           <span className="brand-name">DRC</span>
           <span className="brand-divider" />
           <span className="brand-subtitle">Disk Recovery Control</span>
-          <span className="version">0.4.0</span>
+          <span className="version">0.4.1</span>
         </div>
         <div className="header-actions">
           <div className="mode-switch" aria-label="Workspace experience"><button aria-pressed={experience === "easy"} onClick={() => changeExperience("easy")}>Easy</button><button aria-pressed={experience === "professional"} onClick={() => changeExperience("professional")}>Professional</button></div>
@@ -1227,7 +1204,6 @@ export function App() {
                 )}
                 {tab === "connection" && (
                   <ConnectionView
-                    devices={snapshot?.devices ?? []}
                     platform={snapshot?.platform ?? (tools.some(t=>t.key === "lsblk") ? "Linux" : "macOS")}
                     result={connection}
                     busy={!!busy || archived}
@@ -1346,7 +1322,7 @@ export function App() {
           <span className="status-separator">/</span>
           <span>{records.length} commands</span>
           <span className="status-separator">/</span>
-          <span>DRC 0.4.0</span>
+          <span>DRC 0.4.1</span>
         </div>
       </footer>
       {notice && (
@@ -1450,7 +1426,7 @@ export function App() {
       )}
       {evidenceOpen && <HostEvidence kernelAllowed={!archived} collectReport={collectHostEvidence} reports={hostEvidence} disabled={!!busy || archived} close={closeEvidence} onReport={report=>setHostEvidence(items=>[...items,report as unknown as Json])}/>}
       {referenceOpen && <CheatSheet platform={snapshot?.platform ?? (tools.some(t=>t.key === "lsblk") ? "Linux" : "macOS")} close={closeReference} copy={text=>navigator.clipboard.writeText(text)} />}
-      {easyReading && <Modal title={easyReading === "smart" ? "Reported SMART / NVMe readings" : "Reported connection details"} subtitle="EXPLICIT QUERY / ORIGINAL FIELDS" close={closeEasyReading} wide className="readings-modal">{easyReading === "smart" && device ? <SmartView device={device} result={smart[device.identityKey]} busy={!!busy || archived} run={() => void runSmart()} /> : <ConnectionView devices={snapshot?.devices ?? []} platform={snapshot?.platform ?? (tools.some(t=>t.key === "lsblk") ? "Linux" : "macOS")} result={connection} busy={!!busy || archived} run={() => void runConnection()} />}</Modal>}
+      {easyReading && <Modal title={easyReading === "smart" ? "Reported SMART / NVMe readings" : "Port map"} subtitle="EXPLICIT QUERY / ORIGINAL FIELDS" close={closeEasyReading} wide className="readings-modal">{easyReading === "smart" && device ? <SmartView device={device} result={smart[device.identityKey]} busy={!!busy || archived} run={() => void runSmart()} /> : <ConnectionView platform={snapshot?.platform ?? (tools.some(t=>t.key === "lsblk") ? "Linux" : "macOS")} result={connection} busy={!!busy || archived} run={() => void runConnection()} />}</Modal>}
       {imageOpen && (
         <ImagePanel
           reports={imageReports}

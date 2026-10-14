@@ -26,7 +26,8 @@ pub fn successful_plist(record: &CommandRecord) -> Result<Value, String> {
     }
     if record.exit_code != Some(0) {
         return Err(format!(
-            "diskutil exited with {:?}: {}",
+            "{} exited with {:?}: {}",
+            record.program,
             record.exit_code,
             record.stderr.trim()
         ));
@@ -160,18 +161,21 @@ impl PlatformBackend for MacOsBackend {
             Ok(fields) => (Some(fields), None),
             Err(error) => (None, Some(error.to_string())),
         };
-        let registry = execute(ReadQuery::UsbRegistry)?;
-        let parsed_registry = successful_plist(&registry);
-        let (properties, registry_error) = match parsed_registry {
-            Ok(value) => (Some(value), None),
-            Err(error) => (None, Some(error)),
-        };
-        let report = serde_json::json!({"fields":properties,"parseError":registry_error,"record":registry});
         if fields.as_ref().is_none_or(|value| !value.is_object()) {
             fields = Some(serde_json::json!({"SystemProfilerOriginal":fields}));
         }
-        fields.as_mut().unwrap()["IORegistryUSBReport"] = report;
-        sink(registry);
+        for (key, query) in [
+            ("IORegistryUSBReport", ReadQuery::UsbRegistry),
+            ("IORegistryPortReport", ReadQuery::UsbHostPorts),
+        ] {
+            let registry = execute(query)?;
+            let (properties, registry_error) = match successful_plist(&registry) {
+                Ok(value) => (Some(value), None),
+                Err(error) => (None, Some(error)),
+            };
+            fields.as_mut().unwrap()[key] = serde_json::json!({"fields":properties,"parseError":registry_error,"record":registry});
+            sink(registry);
+        }
         Ok(QueryResult {
             record,
             fields,
@@ -233,6 +237,12 @@ pub fn tool_inventory() -> Vec<ToolReport> {
             "USB / Thunderbolt host connection reports",
         ),
         (
+            "ioreg",
+            "IORegistry",
+            true,
+            "USB registry hierarchy and reported device/controller properties",
+        ),
+        (
             "smartctl",
             "smartmontools",
             true,
@@ -259,7 +269,8 @@ pub fn tool_inventory() -> Vec<ToolReport> {
         ("photorec", "PhotoRec", false, "File signature carving"),
     ];
     if cfg!(target_os = "linux") {
-        definitions.retain(|(key, _, _, _)| !matches!(*key, "diskutil" | "system_profiler"));
+        definitions
+            .retain(|(key, _, _, _)| !matches!(*key, "diskutil" | "system_profiler" | "ioreg"));
         definitions.extend([
             ("lsblk", "util-linux", true, "sysfs / udev block metadata"),
             (
