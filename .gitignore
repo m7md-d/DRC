@@ -1,0 +1,11 @@
+node_modules/
+dist/
+target/
+.tools/
+.cache/
+.DS_Store
+*.log
+artifacts/
+src-tauri/binaries/
+/DRC.app/
+*.tsbuildinfo

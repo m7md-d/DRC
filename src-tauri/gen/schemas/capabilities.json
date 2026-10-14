@@ -1,0 +1,1 @@
+{"main-window":{"identifier":"main-window","description":"Typed metadata, session and source-protected acquisition commands. File dialogs are called by Rust; no webview shell or filesystem access.","local":true,"windows":["main"],"permissions":["core:default"]}}
