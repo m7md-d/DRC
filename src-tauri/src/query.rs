@@ -19,6 +19,7 @@ pub enum ReadQuery {
     DeviceInfo(String),
     Connections,
     UsbRegistry,
+    UsbHostPorts,
     SmartInfo { executable: String, device: String },
 }
 
@@ -81,11 +82,22 @@ impl ReadQuery {
                     "-json".into(),
                     "SPUSBDataType".into(),
                     "SPThunderboltDataType".into(),
+                    "SPNVMeDataType".into(),
                 ],
             ),
             Self::UsbRegistry => (
                 "/usr/sbin/ioreg".into(),
                 vec!["-a".into(), "-p".into(), "IOUSB".into(), "-l".into()],
+            ),
+            Self::UsbHostPorts => (
+                "/usr/sbin/ioreg".into(),
+                vec![
+                    "-a".into(),
+                    "-r".into(),
+                    "-c".into(),
+                    "AppleUSBHostPort".into(),
+                    "-l".into(),
+                ],
             ),
             Self::SmartInfo { executable, device }
                 if (if cfg!(target_os = "linux") {

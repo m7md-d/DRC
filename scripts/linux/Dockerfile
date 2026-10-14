@@ -10,7 +10,7 @@ WORKDIR /work
 ENV CARGO_BUILD_JOBS=2
 COPY . .
 RUN npm ci
-RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/work/src-tauri/target,sharing=locked npm test && npm run rust:test && npm run rust:check && python3 scripts/linux/test-faults.py && npm run desktop:build:linux && mkdir /deliverables && cp src-tauri/target/release/bundle/deb/*.deb /deliverables/ && cp scripts/linux/install-debian.sh docs/LINUX-INSTALL.md .cache/linux-fault-results.json /deliverables/ && cd /deliverables && sha256sum *.deb > SHA256SUMS
+RUN --mount=type=cache,target=/usr/local/cargo/registry --mount=type=cache,target=/work/src-tauri/target,sharing=locked npm test && npm run rust:test && npm run rust:check && python3 scripts/linux/test-faults.py && npm run desktop:build:linux && mkdir /deliverables && cp "src-tauri/target/release/bundle/deb/DRC_$(node -p 'require("./package.json").version')_$(dpkg --print-architecture).deb" /deliverables/ && cp scripts/linux/install-debian.sh docs/LINUX-INSTALL.md .cache/linux-fault-results.json /deliverables/ && cd /deliverables && sha256sum *.deb > SHA256SUMS
 FROM scratch AS artifacts
 COPY --from=build /deliverables/ /
 

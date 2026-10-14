@@ -13,6 +13,51 @@ use std::{
 
 pub struct LinuxBackend;
 static GENERATION: AtomicU64 = AtomicU64::new(1);
+fn connection_block_nodes() -> Value {
+    use base64::Engine;
+    let mut nodes = Vec::new();
+    if let Ok(entries) = std::fs::read_dir("/sys/class/block") {
+        for entry in entries.flatten() {
+            let Ok(path) = entry.path().canonicalize() else {
+                continue;
+            };
+            let mut attributes = serde_json::Map::new();
+            let mut errors = serde_json::Map::new();
+            let mut size_bytes = None;
+            for key in [
+                "size",
+                "ro",
+                "removable",
+                "partition",
+                "queue/logical_block_size",
+                "queue/physical_block_size",
+                "device/model",
+                "device/vendor",
+            ] {
+                match std::fs::read(entry.path().join(key)) {
+                    Ok(bytes) => {
+                        let text = String::from_utf8_lossy(&bytes);
+                        if key == "size" {
+                            size_bytes = text
+                                .trim()
+                                .parse::<u64>()
+                                .ok()
+                                .and_then(|n| n.checked_mul(512))
+                                .map(|n| n.to_string());
+                        }
+                        attributes.insert(key.into(), serde_json::json!({"text":text,"base64":base64::engine::general_purpose::STANDARD.encode(&bytes),"utf8Valid":std::str::from_utf8(&bytes).is_ok()}));
+                    }
+                    Err(error) => {
+                        errors.insert(key.into(), Value::String(error.to_string()));
+                    }
+                }
+            }
+            nodes.push(serde_json::json!({"sysfsName":entry.file_name().to_string_lossy(),"sysfsPath":path.to_string_lossy(),"sizeBytes":size_bytes,"sizeUnitSource":"sysfs size is a count of 512-byte sectors; original text retained in attributes.size","attributes":attributes,"readErrors":errors}));
+        }
+    }
+    nodes.sort_by_key(|v| string_field(v, "sysfsName"));
+    Value::Array(nodes)
+}
 pub const COLUMNS: &str = "NAME,KNAME,TYPE,SIZE,LOG-SEC,PHY-SEC,RO,RM,HOTPLUG,TRAN,VENDOR,MODEL,SERIAL,WWN,FSTYPE,FSVER,LABEL,UUID,PTTYPE,MOUNTPOINTS,PKNAME,MAJ:MIN";
 pub fn valid_id(id: &str) -> bool {
     !id.is_empty()
@@ -187,9 +232,15 @@ impl PlatformBackend for LinuxBackend {
                     Value::String(entry.file_name().to_string_lossy().into_owned()),
                 );
                 if let Ok(path) = entry.path().canonicalize() {
-                    fields.insert("sysfsPath".into(), Value::String(path.to_string_lossy().into_owned()));
+                    fields.insert(
+                        "sysfsPath".into(),
+                        Value::String(path.to_string_lossy().into_owned()),
+                    );
                     if let Some(parent) = path.parent().and_then(Path::file_name) {
-                        fields.insert("parentSysfsName".into(), Value::String(parent.to_string_lossy().into_owned()));
+                        fields.insert(
+                            "parentSysfsName".into(),
+                            Value::String(parent.to_string_lossy().into_owned()),
+                        );
                     }
                 }
                 for key in [
@@ -230,9 +281,15 @@ impl PlatformBackend for LinuxBackend {
                     Value::String(entry.file_name().to_string_lossy().into_owned()),
                 );
                 if let Ok(path) = entry.path().canonicalize() {
-                    fields.insert("sysfsPath".into(), Value::String(path.to_string_lossy().into_owned()));
+                    fields.insert(
+                        "sysfsPath".into(),
+                        Value::String(path.to_string_lossy().into_owned()),
+                    );
                     if let Some(parent) = path.parent().and_then(Path::file_name) {
-                        fields.insert("parentSysfsName".into(), Value::String(parent.to_string_lossy().into_owned()));
+                        fields.insert(
+                            "parentSysfsName".into(),
+                            Value::String(parent.to_string_lossy().into_owned()),
+                        );
                     }
                 }
                 for key in [
@@ -258,7 +315,7 @@ impl PlatformBackend for LinuxBackend {
         Ok(QueryResult {
             record,
             fields: Some(
-                serde_json::json!({"USBDevices":devices,"ThunderboltDevices":thunderbolt,"measurementScope":"sysfs declared USB properties and lsusb topology; no live current measurement"}),
+                serde_json::json!({"USBDevices":devices,"ThunderboltDevices":thunderbolt,"BlockNodes":connection_block_nodes(),"measurementScope":"sysfs declared USB properties and lsusb topology; no live current measurement"}),
             ),
             parse_error: None,
         })

@@ -1,66 +1,359 @@
 import { getField, displayValue } from "./data";
-import type { Device, Json } from "./types";
+import type { Json } from "./types";
 export interface PortNode {
-  id: string; label: string; kind: string; source: string; fields: Json; children: PortNode[]; diskIds: string[];
+  id: string;
+  label: string;
+  kind: string;
+  source: string;
+  fields: Json;
+  children: PortNode[];
+  diskIds: string[];
 }
-const text = (v: Json | undefined) => typeof v === "string" ? v.trim() : undefined;
-const objects = (v: Json | undefined): Json[] => Array.isArray(v) ? v.filter(n => n !== null && typeof n === "object" && !Array.isArray(n)) : v && typeof v === "object" ? [v] : [];
+const text = (v: Json | undefined) =>
+  typeof v === "string" ? v.trim() : undefined;
+const objects = (v: Json | undefined): Json[] =>
+  Array.isArray(v)
+    ? v.filter((n) => n !== null && typeof n === "object" && !Array.isArray(n))
+    : v && typeof v === "object"
+      ? [v]
+      : [];
 function reportedIds(fields: Json): string[] {
   // Only explicit device identifiers, never model/serial heuristics.
-  const ids = ["bsd_name", "BSD Name", "DeviceIdentifier", "kname"].map(k => text(getField(fields,k)));
+  const ids = ["bsd_name", "BSD Name", "DeviceIdentifier", "kname"].map((k) =>
+    text(getField(fields, k)),
+  );
   return [...new Set(ids.filter((id): id is string => !!id))];
 }
-function profiler(nodes: Json[], source: string, path: string, devices: Device[], kind = "Reported device"): PortNode[] {
-  return nodes.map((fields,index) => {
-    const id=`${path}/${index}`;
-    const children=[...profiler(objects(getField(fields,"_items")),source,`${id}/items`,devices),...profiler(objects(getField(fields,"Media")),source,`${id}/media`,devices,"Reported media"),...profiler(objects(getField(fields,"volumes")),source,`${id}/volumes`,devices,"Reported volume")];
+function profiler(
+  nodes: Json[],
+  source: string,
+  path: string,
+  kind = "Reported device",
+): PortNode[] {
+  return nodes.map((fields, index) => {
+    const id = `${path}/${index}`;
+    const children = [
+      ...profiler(objects(getField(fields, "_items")), source, `${id}/items`),
+      ...profiler(
+        objects(getField(fields, "Media")),
+        source,
+        `${id}/media`,
+        "Reported media",
+      ),
+      ...profiler(
+        objects(getField(fields, "volumes")),
+        source,
+        `${id}/volumes`,
+        "Reported volume",
+      ),
+    ];
     if (fields && typeof fields === "object" && !Array.isArray(fields)) {
-      for (const [key,port] of Object.entries(fields)) if (/^receptacle_.*_tag$/.test(key) && port && typeof port === "object") {
-        children.push({id:`${id}/${key}`,label:`Port ${text(getField(port,"receptacle_id_key")) ?? key}`,kind:"Reported port",source,fields:port,children:[],diskIds:reportedIds(port)});
-      }
+      for (const [key, port] of Object.entries(fields))
+        if (
+          /^receptacle_.*_tag$/.test(key) &&
+          port &&
+          typeof port === "object"
+        ) {
+          children.push({
+            id: `${id}/${key}`,
+            label: `Port ${text(getField(port, "receptacle_id_key")) ?? key}`,
+            kind: "Reported port",
+            source,
+            fields: port,
+            children: [],
+            diskIds: reportedIds(port),
+          });
+        }
     }
-    return {id,label:text(getField(fields,"_name")) ?? text(getField(fields,"device_name_key")) ?? kind,kind,source,fields,children,diskIds:reportedIds(fields)};
+    return {
+      id,
+      label:
+        text(getField(fields, "_name")) ??
+        text(getField(fields, "device_name_key")) ??
+        kind,
+      kind,
+      source,
+      fields,
+      children,
+      diskIds: reportedIds(fields),
+    };
   });
 }
-function registry(nodes: Json[],path: string): PortNode[] {
-  return nodes.map((fields,index)=>({id:`${path}/${index}`,label:text(getField(fields,"USB Product Name")) ?? text(getField(fields,"IORegistryEntryName")) ?? "Registry entry",kind:text(getField(fields,"IOObjectClass")) ?? "Registry entry",source:"IORegistry · IOUSB plane",fields,children:registry(objects(getField(fields,"IORegistryEntryChildren")),`${path}/${index}`),diskIds:[]}));
+function registry(
+  nodes: Json[],
+  path: string,
+  source = "IORegistry · IOUSB plane",
+): PortNode[] {
+  return nodes.map((fields, index) => ({
+    id: `${path}/${index}`,
+    label:
+      text(getField(fields, "USB Product Name")) ??
+      text(getField(fields, "IORegistryEntryName")) ??
+      "Registry entry",
+    kind: text(getField(fields, "IOObjectClass")) ?? "Registry entry",
+    source,
+    fields,
+    children: registry(
+      objects(getField(fields, "IORegistryEntryChildren")),
+      `${path}/${index}`,
+      source,
+    ),
+    diskIds: [],
+  }));
 }
-function linux(nodes: Json[],source: string,path: string,devices: Device[]): PortNode[] {
-  const entries=nodes.map((fields,index)=>({id:`${path}/${index}`,label:text(getField(fields,"product")) ?? text(getField(fields,"device_name")) ?? text(getField(fields,"sysfsName")) ?? "Sysfs entry",kind:text(getField(fields,"sysfsName")) ?? "Sysfs entry",source,fields,children:[],diskIds:[]} as PortNode));
-  const byName=new Map(entries.map(n=>[text(getField(n.fields,"sysfsName")),n]));
-  const roots: PortNode[]=[];
+function linux(
+  nodes: Json[],
+  source: string,
+  path: string,
+  blockNodes: Json[],
+): PortNode[] {
+  const entries = nodes.map(
+    (fields, index) =>
+      ({
+        id: `${path}/${index}`,
+        label:
+          text(getField(fields, "product")) ??
+          text(getField(fields, "device_name")) ??
+          text(getField(fields, "sysfsName")) ??
+          "Sysfs entry",
+        kind: text(getField(fields, "sysfsName")) ?? "Sysfs entry",
+        source,
+        fields,
+        children: [],
+        diskIds: [],
+      }) as PortNode,
+  );
+  const byName = new Map(
+    entries.map((n) => [text(getField(n.fields, "sysfsName")), n]),
+  );
+  const roots: PortNode[] = [];
   for (const n of entries) {
-    const parent=byName.get(text(getField(n.fields,"parentSysfsName")));
+    const parent = byName.get(text(getField(n.fields, "parentSysfsName")));
     // Reject a cycle before linking any edge. Imported observations may be untrusted.
-    let cursor=parent; const seen=new Set([n]); let cycle=false;
-    while(cursor) {if(seen.has(cursor)){cycle=true;break;}seen.add(cursor);cursor=byName.get(text(getField(cursor.fields,"parentSysfsName")));}
-    if(parent && !cycle) parent.children.push(n); else roots.push(n);
+    let cursor = parent;
+    const seen = new Set([n]);
+    let cycle = false;
+    while (cursor) {
+      if (seen.has(cursor)) {
+        cycle = true;
+        break;
+      }
+      seen.add(cursor);
+      cursor = byName.get(text(getField(cursor.fields, "parentSysfsName")));
+    }
+    if (parent && !cycle) parent.children.push(n);
+    else roots.push(n);
   }
-  for(const d of devices) {
-    const sysfs=text(getField(d.info,"sysfsPath"));
-    if(!sysfs) continue;
-    const parent=entries.filter(n=>{const p=text(getField(n.fields,"sysfsPath"));return p && sysfs.startsWith(p+"/");}).sort((a,b)=>String(getField(b.fields,"sysfsPath")).length-String(getField(a.fields,"sysfsPath")).length)[0];
-    if(parent) parent.children.push({id:`${parent.id}/disk/${d.id}`,label:d.name,kind:`Block device · /dev/${d.id}`,source:"Snapshot · matching canonical sysfs ancestry",fields:d.info,children:[],diskIds:[d.id]});
+  for (const fields of blockNodes) {
+    const sysfs = text(getField(fields, "sysfsPath"));
+    if (!sysfs) continue;
+    const parent = entries
+      .filter((n) => {
+        const p = text(getField(n.fields, "sysfsPath"));
+        return p && sysfs.startsWith(p + "/");
+      })
+      .sort(
+        (a, b) =>
+          String(getField(b.fields, "sysfsPath")).length -
+          String(getField(a.fields, "sysfsPath")).length,
+      )[0];
+    if (parent)
+      parent.children.push({
+        id: `${parent.id}/disk/${text(getField(fields, "sysfsName"))}`,
+        label: `/dev/${text(getField(fields, "sysfsName"))}`,
+        kind: "Reported block device",
+        source: "Linux sysfs · current block-node ancestry",
+        fields,
+        children: [],
+        diskIds: [text(getField(fields, "sysfsName")) ?? ""],
+      });
   }
   return roots;
 }
-export function portTopology(fields: Json | null,devices: Device[]=[]): PortNode[] {
-  const groups: PortNode[]=[];
-  const group=(id:string,label:string,source:string,children:PortNode[])=>{if(children.length)groups.push({id,label,source,kind:"Report",fields:null,children,diskIds:[]});};
-  group("usb","USB devices","System Profiler",profiler(objects(getField(fields,"SPUSBDataType")),"System Profiler · USB","usb",devices,"Reported bus"));
-  group("thunderbolt","Thunderbolt / USB4","System Profiler",profiler(objects(getField(fields,"SPThunderboltDataType")),"System Profiler · Thunderbolt","thunderbolt",devices,"Reported bus"));
-  group("registry","USB registry","IORegistry",registry(objects(getField(getField(fields,"IORegistryUSBReport"),"fields")),"registry"));
-  group("linux-usb","USB devices","Linux sysfs",linux(objects(getField(fields,"USBDevices")),"Linux sysfs · USB","linux-usb",devices));
-  group("linux-tb","Thunderbolt devices","Linux sysfs",linux(objects(getField(fields,"ThunderboltDevices")),"Linux sysfs · Thunderbolt","linux-tb",devices));
+export function portTopology(fields: Json | null): PortNode[] {
+  const groups: PortNode[] = [];
+  const group = (
+    id: string,
+    label: string,
+    source: string,
+    children: PortNode[],
+  ) => {
+    if (children.length)
+      groups.push({
+        id,
+        label,
+        source,
+        kind: "Report",
+        fields: null,
+        children,
+        diskIds: [],
+      });
+  };
+  group(
+    "usb",
+    "USB devices",
+    "System Profiler",
+    profiler(
+      objects(getField(fields, "SPUSBDataType")),
+      "System Profiler · USB",
+      "usb",
+      "Reported bus",
+    ),
+  );
+  group(
+    "thunderbolt",
+    "Thunderbolt / USB4",
+    "System Profiler",
+    profiler(
+      objects(getField(fields, "SPThunderboltDataType")),
+      "System Profiler · Thunderbolt",
+      "thunderbolt",
+      "Reported bus",
+    ),
+  );
+  group(
+    "nvme",
+    "NVMe storage",
+    "System Profiler",
+    profiler(
+      objects(getField(fields, "SPNVMeDataType")),
+      "System Profiler · NVMe",
+      "nvme",
+      "Reported controller / media",
+    ),
+  );
+  group(
+    "registry",
+    "USB registry",
+    "IORegistry",
+    registry(
+      objects(getField(getField(fields, "IORegistryUSBReport"), "fields")),
+      "registry",
+    ),
+  );
+  group(
+    "usb-ports",
+    "USB host ports",
+    "IORegistry",
+    registry(
+      objects(getField(getField(fields, "IORegistryPortReport"), "fields")),
+      "usb-ports",
+      "IORegistry · AppleUSBHostPort",
+    ),
+  );
+  group(
+    "linux-usb",
+    "USB devices",
+    "Linux sysfs",
+    linux(
+      objects(getField(fields, "USBDevices")),
+      "Linux sysfs · USB",
+      "linux-usb",
+      objects(getField(fields, "BlockNodes")),
+    ),
+  );
+  group(
+    "linux-tb",
+    "Thunderbolt devices",
+    "Linux sysfs",
+    linux(
+      objects(getField(fields, "ThunderboltDevices")),
+      "Linux sysfs · Thunderbolt",
+      "linux-tb",
+      objects(getField(fields, "BlockNodes")),
+    ),
+  );
   return groups;
 }
 export function portMeasurements(node: PortNode) {
-  const f=node.fields;
-  const measurement=(label:string,keys:string[],hint:string)=>{const key=keys.find(k=>getField(f,k)!==undefined);return {label,key,value:key?(["bus_power", "bus_power_used"].includes(key) && /^\d+$/.test(displayValue(getField(f,key))) ? `${displayValue(getField(f,key))} mA` : displayValue(getField(f,key))):"Not reported",hint};};
+  const f = node.fields;
+  const speeds: Record<string, string> = {
+    low_speed: "Up to 1.5 Mb/s",
+    full_speed: "Up to 12 Mb/s",
+    high_speed: "Up to 480 Mb/s",
+    super_speed: "Up to 5 Gb/s",
+    super_speed_plus: "Up to 10 Gb/s",
+    super_speed_plus_by_2: "Up to 20 Gb/s",
+    super_speed_limited: "Limited to 5 Gb/s",
+  };
+  const reported = (key: string) =>
+    key === "IOPowerManagement.CurrentPowerState"
+      ? getField(getField(f, "IOPowerManagement"), "CurrentPowerState")
+      : getField(f, key);
+  const measurement = (label: string, keys: string[], hint: string) => {
+    const key = keys.find((k) => reported(k) !== undefined);
+    return {
+      label,
+      key,
+      value: key
+        ? ["bus_power", "bus_power_used"].includes(key) &&
+          /^\d+$/.test(displayValue(reported(key)))
+          ? `${displayValue(reported(key))} mA`
+          : key === "device_speed"
+            ? (speeds[displayValue(reported(key))] ??
+              displayValue(reported(key)))
+            : key === "speed" &&
+                /^\d+(\.\d+)?$/.test(displayValue(reported(key)))
+              ? `${displayValue(reported(key))} Mb/s`
+              : displayValue(reported(key))
+        : "Not reported",
+      hint,
+    };
+  };
   return [
-    measurement("Link / speed",["device_speed","speed","current_speed_key","current_link_speed"],"Reported link or descriptor value. This is not measured read/write throughput."),
-    measurement("Power requested",["bus_power_used","bMaxPower","USB Power Requested"],"Declared or host-allocated USB power metadata. It does not measure current flowing into the drive."),
-    measurement("Power available",["bus_power","bus_power_available","kUSBWakePortCurrentLimit","kUSBSleepPortCurrentLimit"],"Host-reported current limit or budget. It is not proof of voltage or current reaching the SSD."),
-    measurement("Port / power state",["receptacle_status_key","power/runtime_status","IOServiceState","authorized"],"Original port, runtime or authorization state. These values do not establish the state of the disk inside an enclosure."),
+    measurement(
+      "Link / speed",
+      ["device_speed", "speed", "current_speed_key", "current_link_speed"],
+      "Reported link or descriptor value. This is not measured read/write throughput.",
+    ),
+    measurement(
+      "Power requested",
+      ["bus_power_used", "bMaxPower", "USB Power Requested"],
+      "Declared or host-allocated USB power metadata. It does not measure current flowing into the drive.",
+    ),
+    measurement(
+      "Power available",
+      [
+        "bus_power",
+        "bus_power_available",
+        "kUSBWakePortCurrentLimit",
+        "kUSBSleepPortCurrentLimit",
+      ],
+      "Host-reported current limit or budget. It is not proof of voltage or current reaching the SSD.",
+    ),
+    measurement(
+      "Port / power state",
+      [
+        "IOPowerManagement.CurrentPowerState",
+        "receptacle_status_key",
+        "power/runtime_status",
+        "IOServiceState",
+        "authorized",
+      ],
+      "Original port, runtime or authorization state. These values do not establish the state of the disk inside an enclosure.",
+    ),
   ];
+}
+
+export function driverStateDurations(
+  fields: Json,
+): { key: string; milliseconds: string; original: string }[] | null {
+  const value = getField(
+    getField(fields, "port-statistics"),
+    "kPortStatPowerStateTime",
+  );
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const entries = Object.entries(value);
+  if (!entries.length) return null;
+  const parsed = entries.map(([key, original]) => {
+    const match =
+      typeof original === "string"
+        ? /^(\d+)ms(?: \(\d+%\))?$/.exec(original)
+        : null;
+    return match
+      ? { key, milliseconds: match[1], original: original as string }
+      : null;
+  });
+  // Never hide an unknown format and normalize the remaining states as a full set.
+  return parsed.every((entry) => entry !== null) ? parsed : null;
 }

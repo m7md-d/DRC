@@ -3,7 +3,7 @@ import { bridge, native } from "./bridge";
 import { FieldTable } from "./FieldTable";
 import { ArtifactPreview } from "./ArtifactPreview";
 import { ByteValue } from "./ByteValue";
-import { commandLine, humanBytes, timestamp } from "./data";
+import { commandLine, timestamp } from "./data";
 import type { ExtractionJob, ExtractionPlan, Json } from "./types";
 
 export function ExtractionPanel({
@@ -123,7 +123,7 @@ export function ExtractionPanel({
             {plan.destination}/DRC-extraction-…
           </code>
           <p className="source-label">
-            Available {humanBytes(plan.freeBytes)} · {plan.freeBytes} bytes. A
+            Available <ByteValue value={plan.freeBytes}/>. A
             new private folder is created. Each output is capped at the entry's
             reported size; an attempt exceeding that limit is retained as
             partial. Each reader has a one-hour process limit. A stop request

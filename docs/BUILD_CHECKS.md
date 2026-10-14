@@ -1,4 +1,4 @@
-# DRC 0.4.0 verification — 14 October 2026
+# DRC 0.4.1 verification — 14 October 2026
 
 ## Native packages
 
@@ -9,7 +9,7 @@
 
 ## Automated checks
 
-- Production TypeScript check and frontend build pass. Fifteen frontend tests cover exact numeric fields, paths, SMART flags, map coverage, inert terminal escapes and the offline reference's OS profiles, effects and searchable flags.
+- Production TypeScript check and frontend build pass. Twenty frontend tests cover exact numeric fields, paths, SMART flags, map coverage, inert terminal escapes and the offline reference's OS profiles, effects and searchable flags.
 - Thirty macOS Rust tests and thirty-one Linux Rust tests pass. Coverage includes descriptor/protection checks, layered hardware backing, no-namespace host evidence, returned descriptor restrictions, acquisition/map verification, controlled stop/resume and image extraction.
 - Rust Clippy passes with warnings denied on both hosts.
 - GNU ddrescue tests use generated regular images. Simulated unreadable regions cannot become a falsely complete image merely because the output has full length.
@@ -17,10 +17,14 @@
 - The kernel harness uses an owned generated read-only loop image. Mounting while exclusively claimed is refused, claiming a mounted source returns EBUSY and writing through the read-only descriptor returns EBADF. Source hash stays unchanged. Its scope and results are recorded in `linux-kernel-results-ARCH.json` release assets.
 - Image-reader tests use generated MBR/FAT16 images with allocated, deleted, Unicode and fragmented binary files. An NTFS/exFAT recovery corpus has not been validated.
 
+- Port-topology tests retain hub/enclosure observations with no invented SSD, preserve reported media/port children, verify required versus available USB current labels and reject cyclic or guessed ancestry. Unknown node fields remain intact.
+
 ## Native-window checks
 
 - Own macOS window, production content at `tauri://localhost`, English interface and local session persistence.
 - Easy and Professional share the same session and source policy. Easy exposes inspection, imaging and exploration while retaining access to all original fields and command output.
+- Port map verified using a previous saved USB/media hierarchy and a new live System Profiler/IORegistry report. Required/available current remain distinguished from actual electrical measurements.
+- Native wide and portrait layouts and exact-byte focus hints checked.
 - Reference OS/profile switching, category/search filtering, custom keyboard-operable selector, independent pane scrolling and inert copy-only examples checked in the native window.
 - Protected personal media remain metadata-only; SMART, traversal and imaging admission are disabled. Discovery is independent of filesystem support.
 - Physical-source admission requires a positively external medium on macOS. Linux separately resolves non-system hardware backing, including secondary internal SATA/NVMe, excludes system/swap and mounted sources, and holds a read-only exclusive descriptor.
