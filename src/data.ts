@@ -1,4 +1,4 @@
-import type { Json, CommandRecord } from "./types";
+import type { Json, CommandRecord, Device } from "./types";
 
 export interface Field {
   path: string;
@@ -126,4 +126,10 @@ export function smartStatus(code: number | null): string[] {
     "Bit 7 · device self-test log contains errors",
   ];
   return labels.filter((_, bit) => (code & (1 << bit)) !== 0);
+}
+
+export function canAcquireDevice(device: Device | undefined): device is Device {
+  if (!device || device.metadataOnly || device.infoError) return false;
+  if (getField(device.info,"kname") !== undefined) return getField(getField(device.info,"drcObservation"),"systemBacking") === false;
+  return device.internal === false;
 }

@@ -48,15 +48,29 @@ pub fn successful_plist(record: &CommandRecord) -> Result<Value, String> {
 
 pub fn identity_key(info: &Value) -> String {
     // This is an observed descriptor, not a claim of unique hardware identity.
-    let keys = [
-        "DeviceIdentifier",
-        "DeviceTreePath",
-        "DiskUUID",
-        "MediaName",
-        "TotalSize",
-        "DeviceBlockSize",
-        "Internal",
-    ];
+    let keys = if info.get("kname").is_some() {
+        vec![
+            "kname",
+            "maj:min",
+            "sysfsPath",
+            "size",
+            "log-sec",
+            "model",
+            "serial",
+            "wwn",
+            "tran",
+        ]
+    } else {
+        vec![
+            "DeviceIdentifier",
+            "DeviceTreePath",
+            "DiskUUID",
+            "MediaName",
+            "TotalSize",
+            "DeviceBlockSize",
+            "Internal",
+        ]
+    };
     let fields: Vec<Value> = keys
         .iter()
         .map(|key| info.get(*key).cloned().unwrap_or(Value::Null))
@@ -69,6 +83,7 @@ pub fn smart_path() -> Option<String> {
         "/opt/homebrew/bin/smartctl",
         "/usr/local/bin/smartctl",
         "/usr/bin/smartctl",
+        "/usr/sbin/smartctl",
     ]
     .into_iter()
     .find(|path| Path::new(path).is_file())
@@ -192,7 +207,7 @@ impl PlatformBackend for MacOsBackend {
 }
 
 pub fn tool_inventory() -> Vec<ToolReport> {
-    let definitions = [
+    let mut definitions = vec![
         (
             "diskutil",
             "diskutil",
@@ -231,6 +246,24 @@ pub fn tool_inventory() -> Vec<ToolReport> {
         ),
         ("photorec", "PhotoRec", false, "File signature carving"),
     ];
+    if cfg!(target_os = "linux") {
+        definitions.retain(|(key, _, _, _)| !matches!(*key, "diskutil" | "system_profiler"));
+        definitions.extend([
+            ("lsblk", "util-linux", true, "sysfs / udev block metadata"),
+            (
+                "udevadm",
+                "udev",
+                true,
+                "Device properties and block connection events",
+            ),
+            (
+                "lsusb",
+                "usbutils",
+                true,
+                "USB topology and sysfs connection properties",
+            ),
+        ]);
+    }
     definitions
         .into_iter()
         .map(|(key, name, implemented, purpose)| {
@@ -242,6 +275,8 @@ pub fn tool_inventory() -> Vec<ToolReport> {
             ];
             let path = if key == "drc-tsk" {
                 crate::images::executable().ok()
+            } else if key == "ddrescue" {
+                crate::acquisition::executable().ok()
             } else {
                 paths.into_iter().find(|path| Path::new(path).is_file())
             };
@@ -255,6 +290,24 @@ pub fn tool_inventory() -> Vec<ToolReport> {
             }
         })
         .collect()
+}
+
+pub fn backend() -> &'static dyn PlatformBackend {
+    if cfg!(target_os = "linux") {
+        &crate::linux::LinuxBackend
+    } else {
+        &MacOsBackend
+    }
+}
+pub fn read_info(id: &str, sink: &mut dyn FnMut(CommandRecord)) -> Result<Value, String> {
+    if cfg!(target_os = "linux") {
+        crate::linux::read_info(id, sink)
+    } else {
+        let result = execute(ReadQuery::DeviceInfo(id.into()))?;
+        let parsed = successful_plist(&result);
+        sink(result);
+        parsed
+    }
 }
 
 #[cfg(test)]

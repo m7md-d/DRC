@@ -3,9 +3,11 @@ import { resolve } from "node:path";
 import { existsSync } from "node:fs";
 import { buildEnvironment } from "./environment.mjs";
 import { packageImageHelper } from "./package-image-helper.mjs";
+import { prepareLinuxBundle } from "./linux/prepare-bundle.mjs";
 import { buildImageHelper } from "./image-helper.mjs";
 
 await buildImageHelper();
+if (process.platform === "linux" && process.argv[2] === "build") await prepareLinuxBundle();
 
 const cli = resolve(
   import.meta.dirname,

@@ -35,7 +35,8 @@ pub fn apply_protection(store: &Store, device: &mut Device) -> Result<(), String
     let key = protection_key(device);
     // The user's personal flash is explicitly authorized for metadata only.
     // Match broadly across reconnects so a port/partition change cannot unlock it.
-    if (device.name.trim() == "SanDisk 3.2Gen1"
+    if ((device.name.trim() == "SanDisk 3.2Gen1"
+        || (cfg!(target_os = "linux") && device.size_bytes.as_deref() == Some("494206451712")))
         && device.size_bytes.as_deref() == Some("494206451712"))
         || device.partitions.iter().any(|partition| {
             partition.get("VolumeUUID").and_then(Value::as_str)
@@ -56,20 +57,27 @@ pub fn require_acquisition(device: &Device, fresh: &Value) -> Result<(), String>
             .clone()
             .unwrap_or("This medium permits metadata only.".into()));
     }
-    if device.internal != Some(false) {
-        return Err("Physical acquisition requires a positively identified external medium. Internal/system media are excluded in this build.".into());
+    let linux = fresh.get("kname").is_some();
+    if (linux && fresh.pointer("/drcObservation/systemBacking") != Some(&Value::Bool(false)))
+        || (!linux && device.internal != Some(false))
+    {
+        return Err("Physical acquisition requires a resolved non-system Linux disk or a positively identified external macOS disk. System or unresolved backing is excluded.".into());
     }
     if device.info.is_null() || identity_key(fresh) != device.identity_key {
         return Err(
             "The source descriptor changed or is unavailable. Refresh and select it again.".into(),
         );
     }
-    if fresh.get("WholeDisk") != Some(&Value::Bool(true))
-        || !device
-            .id
-            .strip_prefix("disk")
-            .is_some_and(|suffix| !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit()))
-    {
+    let whole = if fresh.get("kname").is_some() {
+        fresh.get("type").and_then(Value::as_str) == Some("disk")
+            && crate::linux::valid_id(&device.id)
+    } else {
+        fresh.get("WholeDisk") == Some(&Value::Bool(true))
+            && device.id.strip_prefix("disk").is_some_and(|suffix| {
+                !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit())
+            })
+    };
+    if !whole {
         return Err("Physical acquisition requires a whole physical disk, not a partition or synthesized volume.".into());
     }
     if device
@@ -160,7 +168,7 @@ pub fn available_bytes(directory: &File) -> Result<u64, String> {
             return Err(std::io::Error::last_os_error().to_string());
         }
         let s = unsafe { s.assume_init() };
-        Ok((s.f_bavail as u64).saturating_mul(s.f_frsize))
+        Ok((u128::from(s.f_bavail) * u128::from(s.f_frsize)).min(u128::from(u64::MAX)) as u64)
     }
     #[cfg(not(unix))]
     {
@@ -184,13 +192,25 @@ pub fn require_image_capacity(directory: &File, size: u64) -> Result<(), String>
             return Err("This destination is an MS-DOS/FAT filesystem; the planned image exceeds its 4 GiB minus one byte file limit.".into());
         }
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        let mut filesystem = std::mem::MaybeUninit::<libc::statfs>::uninit();
+        if unsafe { libc::fstatfs(directory.as_raw_fd(), filesystem.as_mut_ptr()) } != 0 {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        let filesystem = unsafe { filesystem.assume_init() };
+        if filesystem.f_type == 0x4d44 && size > u32::MAX as u64 {
+            return Err("FAT destination file limit exceeded (4 GiB minus one byte).".into());
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         let _ = (directory, size);
     }
     Ok(())
 }
 
+#[cfg(any(target_os = "macos", test))]
 pub fn physical_stores(info: &Value) -> Result<Vec<String>, String> {
     if let Some(stores) = info.get("APFSPhysicalStores").and_then(Value::as_array) {
         let ids: Vec<_> = stores
@@ -223,6 +243,7 @@ pub fn physical_stores(info: &Value) -> Result<Vec<String>, String> {
     Err("The physical backing of this path could not be established. DRC refuses an ambiguous source or destination.".into())
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn whole_disk(id: &str) -> Result<String, String> {
     if !crate::query::valid_device_id(id) {
         return Err("Invalid physical store identifier".into());
@@ -255,6 +276,26 @@ mod tests {
             metadata_only: false,
             protection_reason: None,
         }
+    }
+    #[test]
+    fn secondary_nvme_requires_resolved_non_system_backing_even_when_location_is_unknown() {
+        let mut device = medium();
+        device.id = "nvme1n1".into();
+        device.name = "Synthetic Samsung NVMe".into();
+        device.internal = None;
+        device.metadata_only = false;
+        device.size_bytes = Some("1048576".into());
+        device.info = serde_json::json!({"kname":"nvme1n1","type":"disk","size":"1048576","log-sec":"512","serial":"TEST-SOURCE","sysfsPath":"/sys/devices/test","drcObservation":{"systemBacking":false}});
+        device.identity_key = identity_key(&device.info);
+        assert!(require_acquisition(&device, &device.info).is_ok());
+        let mut system = device.info.clone();
+        system["drcObservation"]["systemBacking"] = Value::Bool(true);
+        assert!(require_acquisition(&device, &system).is_err());
+        system["drcObservation"]["systemBacking"] = Value::Null;
+        assert!(require_acquisition(&device, &system).is_err());
+        let mut changed = device.info.clone();
+        changed["size"] = Value::String("0".into());
+        assert!(require_acquisition(&device, &changed).is_err());
     }
     #[test]
     fn personal_flash_remains_metadata_only_after_number_and_port_changes() {

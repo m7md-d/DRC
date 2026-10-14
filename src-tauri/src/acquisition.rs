@@ -42,6 +42,8 @@ pub struct Settings {
     pub sector_size: u32,
     pub retry_passes: u8,
     pub copying_only: bool,
+    #[serde(default)]
+    pub reverse: bool,
     pub timeout_seconds: u32,
     pub max_read_rate: Option<String>,
 }
@@ -130,15 +132,27 @@ pub struct Manager {
 }
 
 pub fn executable() -> Result<String, String> {
-    [
-        "/opt/homebrew/bin/ddrescue",
-        "/usr/local/bin/ddrescue",
-        "/usr/bin/ddrescue",
-    ]
-    .into_iter()
-    .find(|p| Path::new(p).is_file())
-    .map(str::to_owned)
-    .ok_or("GNU ddrescue is not installed at a supported location.".into())
+    let packaged = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.join("drc-ddrescue")));
+    let development = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("binaries")
+        .join(concat!("drc-ddrescue-", env!("DRC_BUILD_TARGET")));
+    packaged
+        .into_iter()
+        .chain(std::iter::once(development))
+        .chain(
+            [
+                "/opt/homebrew/bin/ddrescue",
+                "/usr/local/bin/ddrescue",
+                "/usr/bin/ddrescue",
+            ]
+            .into_iter()
+            .map(std::path::PathBuf::from),
+        )
+        .find(|p| p.is_file())
+        .map(|p| p.to_string_lossy().into_owned())
+        .ok_or("GNU ddrescue is not installed at a supported location.".into())
 }
 
 pub fn decimal(value: &str, label: &str) -> Result<u64, String> {
@@ -212,6 +226,9 @@ pub fn arguments(
         format!("--log-rates={rates}"),
         format!("--extend-outfile={total}"),
     ];
+    if settings.reverse {
+        args.push("--reverse".into());
+    }
     if settings.copying_only {
         args.extend([
             "--no-trim".into(),
@@ -231,7 +248,7 @@ pub fn resume_settings(job: &Job, mut requested: Settings) -> Result<Settings, S
         || requested.length != job.settings.length
         || requested.sector_size != job.settings.sector_size
     {
-        return Err("A resumed image must retain its original offset, length and logical sector size. Only read phases, retries, timeout and rate cap may change.".into());
+        return Err("A resumed image must retain its original offset, length and logical sector size. Only direction, read phases, retries, timeout and rate cap may change.".into());
     }
     validate_settings(&mut requested, decimal(&job.source_size, "Source size")?)?;
     Ok(requested)
@@ -1173,6 +1190,7 @@ mod tests {
             sector_size: 512,
             retry_passes: 0,
             copying_only: true,
+            reverse: false,
             timeout_seconds: 30,
             max_read_rate: None,
         }
