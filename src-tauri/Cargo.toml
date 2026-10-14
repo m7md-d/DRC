@@ -1,6 +1,6 @@
 [package]
 name = "drc"
-version = "0.4.1"
+version = "0.4.2"
 description = "Disk Recovery Control — observations and source-protected acquisition"
 authors = ["m7md-d"]
 edition = "2021"

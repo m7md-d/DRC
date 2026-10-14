@@ -15,7 +15,7 @@ DRC opens its own desktop window. The packaged application needs neither a brows
 3. In the download folder, verify the exact downloaded package against its entry in `SHA256SUMS`. The file lists both architectures; checking your one downloaded file avoids a missing-file error for the other architecture:
 
    ```sh
-   sha256sum DRC_0.4.1_arm64.deb
+   sha256sum DRC_0.4.2_arm64.deb
    ```
 
    Compare the printed checksum with the matching filename in `SHA256SUMS`. Package filenames use the actual version/architecture from the release. Checksums detect an altered download; obtain them from the same reviewed official release.
@@ -23,10 +23,10 @@ DRC opens its own desktop window. The packaged application needs neither a brows
 
    ```sh
    sudo apt update
-   sudo apt install ./DRC_0.4.1_arm64.deb
+   sudo apt install ./DRC_0.4.2_arm64.deb
    ```
 
-   Alternatively, inspect the provided script, then run `bash install-debian.sh ./DRC_0.4.1_arm64.deb`. It checks the package name and architecture and uses APT for dependencies. It does not modify device permissions or read/write connected media.
+   Alternatively, inspect the provided script, then run `bash install-debian.sh ./DRC_0.4.2_arm64.deb`. It checks the package name and architecture and uses APT for dependencies. It does not modify device permissions or read/write connected media.
 5. Launch **DRC** from your desktop's Applications menu, or run `drc` in a terminal **as your ordinary desktop user**. Never start DRC with `sudo`.
 
 The package includes its private image-reader libraries and **GNU ddrescue 1.30** as `drc-ddrescue`. APT resolves WebKitGTK/GTK and installs SMART, USB, udev and standalone Sleuth Kit tools. Dependencies require network access on first installation. DRC itself does not contact a server to inspect or copy data. This is a desktop package, not a headless server utility.
@@ -94,7 +94,7 @@ This builds for the host container architecture. It runs frontend tests, Rust te
 
 ## GitHub builds
 
-The **Debian desktop packages** workflow supports pull requests, a manual run and version tags. Each successful run uploads amd64 and arm64 package artifacts. A version tag such as `v0.4.1` publishes a release **only after both builds pass**. The repository must allow Actions and its token to create releases. Review the version in `package.json`, `Cargo.toml` and Tauri configuration before tagging.
+The **Debian desktop packages** workflow supports pull requests, a manual run and version tags. Each successful run uploads amd64 and arm64 package artifacts. A version tag such as `v0.4.2` publishes a release **only after both builds pass**. The repository must allow Actions and its token to create releases. Review the version in `package.json`, `Cargo.toml` and Tauri configuration before tagging.
 
 ## Updating, removal and startup errors
 
