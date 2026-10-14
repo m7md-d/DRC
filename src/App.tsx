@@ -857,7 +857,7 @@ export function App() {
           <span className="brand-name">DRC</span>
           <span className="brand-divider" />
           <span className="brand-subtitle">Disk Recovery Control</span>
-          <span className="version">0.3.0</span>
+          <span className="version">0.3.1</span>
         </div>
         <div className="header-actions">
           <button
@@ -1314,7 +1314,7 @@ export function App() {
           <span className="status-separator">/</span>
           <span>{records.length} commands</span>
           <span className="status-separator">/</span>
-          <span>DRC 0.3.0</span>
+          <span>DRC 0.3.1</span>
         </div>
       </footer>
       {notice && (
