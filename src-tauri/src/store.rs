@@ -8,7 +8,22 @@ static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
 
 pub struct Store {
     db: Mutex<Connection>,
-    _instance_lock: std::fs::File,
+    _instance_lock: InstanceLock,
+}
+
+struct InstanceLock(std::fs::File);
+
+impl Drop for InstanceLock {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        {
+            use std::os::unix::io::AsRawFd;
+            // A concurrently spawned helper can briefly inherit this open file
+            // description before exec closes it. Release our claim explicitly
+            // after the database has closed, even while that alias still exists.
+            unsafe { libc::flock(self.0.as_raw_fd(), libc::LOCK_UN) };
+        }
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, Default)]
@@ -62,6 +77,7 @@ impl Store {
                 );
             }
         }
+        let instance_lock = InstanceLock(instance_lock);
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -365,6 +381,27 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn closing_store_releases_claim_with_an_inherited_descriptor() {
+        let root = std::env::temp_dir().join(format!(
+            "drc-store-inheritance-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let store = Store::open(&root).unwrap();
+        // dup and fork refer to the same open file description. Keep that alias
+        // alive to reproduce a concurrent helper's brief pre-exec inheritance.
+        let inherited = store._instance_lock.0.try_clone().unwrap();
+        assert!(Store::open(&root).is_err());
+        drop(store);
+        let reopened = Store::open(&root).unwrap();
+        drop(inherited);
+        assert!(Store::open(&root).is_err());
+        drop(reopened);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn restart_preserves_unknown_values_streams_and_sessions() {
         let root = std::env::temp_dir().join(format!("drc-store-test-{}", now_ms()));
