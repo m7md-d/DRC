@@ -4,7 +4,12 @@ import { buildImageHelper } from "./image-helper.mjs";
 
 await buildImageHelper();
 
-const child = spawn("cargo", process.argv.slice(2), {
+const args = process.argv.slice(2);
+if (process.platform === "darwin" && ["test", "check", "clippy", "build", "run"].includes(args[0])) {
+  const separator = args.indexOf("--");
+  args.splice(separator < 0 ? args.length : separator, 0, "--features", "macos-menu-bar");
+}
+const child = spawn("cargo", args, {
   stdio: "inherit",
   env: buildEnvironment(),
 });

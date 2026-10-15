@@ -1,6 +1,6 @@
 [package]
 name = "drc"
-version = "0.4.3"
+version = "0.4.5"
 description = "Disk Recovery Control — observations and source-protected acquisition"
 authors = ["m7md-d"]
 edition = "2021"
@@ -11,6 +11,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+serde_json = "1"
+
+[features]
+macos-menu-bar = []
 
 [dependencies]
 tauri = { version = "2", features = [] }

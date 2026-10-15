@@ -4,6 +4,7 @@ mod extraction;
 mod host_evidence;
 mod images;
 mod linux;
+mod menu_bar;
 mod model;
 mod mount_guard;
 mod platform;
@@ -104,6 +105,7 @@ async fn discover_devices(
     for device in &result.devices {
         devices.insert(device.token.clone(), device.clone());
     }
+    menu_bar::discovered(&app, &result);
     Ok(result)
 }
 
@@ -143,6 +145,7 @@ async fn read_smart(
         "smart",
         &serde_json::json!({"identityKey":device.identity_key,"result":result}),
     )?;
+    menu_bar::smart(&app, device.identity_key, &result);
     Ok(result)
 }
 
@@ -160,6 +163,7 @@ async fn read_connections(
     let result = platform::backend().connections(&mut |record| emit_record(&app, record))?;
     emit_record(&app, result.record.clone());
     app.state::<Arc<Store>>().append("connection", &result)?;
+    menu_bar::connected(&app, &result);
     Ok(result)
 }
 
@@ -269,6 +273,7 @@ fn start_device_watch(
                         observed_at: now_ms(),
                         line,
                     };
+                    menu_bar::invalidate(&stdout_app);
                     if let Err(error) = stdout_app.state::<Arc<Store>>().append("event", &event) {
                         let _ = stdout_app.emit("persistence-error", error);
                     }
@@ -1017,6 +1022,9 @@ pub fn run() {
             acquisition::recover_jobs(&store).map_err(std::io::Error::other)?;
             extraction::recover(&store).map_err(std::io::Error::other)?;
             app.manage(store);
+            app.manage(menu_bar::Cache::default());
+            #[cfg(all(target_os = "macos", feature = "macos-menu-bar"))]
+            menu_bar::setup(app)?;
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1054,18 +1062,31 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("Cannot start DRC");
     app.run(|app, event| {
-        if let tauri::RunEvent::ExitRequested { api,.. }=&event {
-            let state=app.state::<Runtime>();
-            if let Some(id)=state.acquisition.active_id() {
-                api.prevent_exit();let _=state.acquisition.stop(&id);
-                let _=app.emit("exit-deferred","Acquisition stop requested. DRC will remain open until ddrescue exits and the mapfile is saved. Quit again after it stops.");
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Reopen { has_visible_windows: false, .. } = &event {
+            let _ = menu_bar::menu_bar_open(app.clone(), "overview".into(), None);
+        }
+        let mut deferred = false;
+        if let tauri::RunEvent::ExitRequested { api, .. } = &event {
+            let state = app.state::<Runtime>();
+            if let Some(id) = state.acquisition.active_id() {
+                deferred = true;
+                api.prevent_exit();
+                let _ = state.acquisition.stop(&id);
+                let _ = app.emit("exit-deferred", "Acquisition stop requested. DRC will remain open until ddrescue exits and the mapfile is saved. Quit again after it stops.");
             }
-            if let Some(id)=state.extraction.active_id() {
-                api.prevent_exit(); let _=state.extraction.stop(&id);
-                let _=app.emit("exit-deferred","File extraction stop requested. DRC remains open until the reader exits and its output is saved. Quit again after it stops.");
+            if let Some(id) = state.extraction.active_id() {
+                deferred = true;
+                api.prevent_exit();
+                let _ = state.extraction.stop(&id);
+                let _ = app.emit("exit-deferred", "File extraction stop requested. DRC remains open until the reader exits and its output is saved. Quit again after it stops.");
+            }
+            #[cfg(target_os = "macos")]
+            if deferred {
+                let _ = menu_bar::menu_bar_open(app.clone(), "overview".into(), None);
             }
         }
-        if matches!(
+        if !deferred && matches!(
             event,
             tauri::RunEvent::Exit | tauri::RunEvent::ExitRequested { .. }
         ) {
