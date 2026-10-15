@@ -2,7 +2,9 @@
 
 DRC is a native desktop workspace for inspecting storage, acquiring raw images and extracting selected files from images. It opens its own window; a packaged build needs no browser or development server. The English interface follows [m7md-d’s brand system](BRAND-SYSTEM.md), with local fonts, measured statistics and original tool output. Users interpret the readings and choose operations.
 
-## Version 0.4.2
+## Version 0.4.3
+
+This release adds partial-map coverage, explicit read-request/error limits, manual SMART transport choices and stronger destination/log failure handling. See [the researched cases and tested boundaries](docs/SSD-RESILIENCE.md).
 
 - **Easy** workspace: observed device status, exact capacity, reported SMART/temperature, partition proportions, and explicit inspection / imaging / image exploration flows.
 - **Professional** workspace: all original fields, vendor properties, unknown values, detailed settings, operation logs and raw output. The experience toggle preserves the same session and backend protections.
@@ -15,7 +17,7 @@ DRC is a native desktop workspace for inspecting storage, acquiring raw images a
 
 Windows is a future platform adapter. Its reference is not presented as available. Filesystems are independent of the host: Windows disk formats such as NTFS, FAT and exFAT remain targets of the image reader. The existing generated-data validation covers FAT16, MBR, deleted/Unicode entries and fragmented binary extraction; NTFS and exFAT need further corpus validation.
 
-The 0.4.2 interface adds an adaptive Easy workspace, hover/focus explanations and readable decimal capacity values with exact bytes on hover or focus. **Port map** shows host-reported USB/hub/enclosure relationships, USB registry and host-port power/statistics properties on macOS and canonical sysfs ancestry on Linux. An enumerated enclosure and a declared current budget do not establish electrical power reaching its SSD or readable sectors. Original properties and command bytes remain available.
+The interface includes an adaptive Easy workspace, hover/focus explanations and readable decimal capacity values with exact bytes on hover or focus. **Port map** shows host-reported USB/hub/enclosure relationships, USB registry and host-port power/statistics properties on macOS and canonical sysfs ancestry on Linux. An enumerated enclosure and a declared current budget do not establish electrical power reaching its SSD or readable sectors. Original properties and command bytes remain available.
 
 ## Install Linux
 

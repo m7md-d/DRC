@@ -42,6 +42,7 @@ import { Modal } from "./Modal";
 import { ByteValue } from "./ByteValue";
 import { Hints } from "./Hints";
 import { PortTree } from "./PortTree";
+import { Select } from "./Select";
 
 const tabs: { key: Tab; label: string; icon: IconName }[] = [
   { key: "device", label: "Device", icon: "drive" },
@@ -164,8 +165,10 @@ function SmartView({
   device: Device;
   result?: QueryResult;
   busy: boolean;
-  run: () => void;
+  run: (deviceType?: string) => void;
 }) {
+  const [deviceType, setDeviceType] = useState("auto");
+  useEffect(() => setDeviceType("auto"), [device.token]);
   return (
     <>
       <div className="section-heading">
@@ -178,12 +181,29 @@ function SmartView({
         <button
           className="button primary"
           disabled={busy || !native || device.metadataOnly}
-          onClick={run}
+          onClick={() => run(deviceType)}
         >
           <Icon name="refresh" />
           Read information
         </button>
       </div>
+      <details className="smart-transport-options">
+        <summary data-hint="Some USB bridges need an explicit SMART pass-through protocol. Choose a mode using the bridge's documentation, then request a read. DRC does not cycle modes automatically; host and bridge support can still reject the command.">Connection options · SMART transport</summary>
+        <div className="form-field">
+          <span>Pass-through protocol</span>
+          <Select label="SMART pass-through protocol" value={deviceType} onChange={setDeviceType} disabled={busy || device.metadataOnly}
+            options={[
+              {value:"auto",label:"Automatic detection",detail:"smartctl chooses its device type"},
+              {value:"sat",label:"SAT · ATA over SCSI",detail:"Documented SATA bridge pass-through"},
+              {value:"scsi",label:"SCSI",detail:"SCSI information interface"},
+              {value:"nvme",label:"Native NVMe",detail:"Host-exposed NVMe interface"},
+              {value:"sntasmedia",label:"ASMedia · USB to NVMe",detail:"Requires supported bridge firmware and host"},
+              {value:"sntjmicron",label:"JMicron · USB to NVMe",detail:"Requires supported bridge firmware and host"},
+              {value:"sntrealtek",label:"Realtek · USB to NVMe",detail:"Requires supported bridge firmware and host"},
+            ]}/>
+        </div>
+        <p className="source-label">Changing this selection performs no query. Unsupported pass-through is retained as original output and does not establish disk failure. Some macOS bridges require a vendor driver.</p>
+      </details>
       {device.metadataOnly && (
         <div className="inline-note">
           <Icon name="shield" />
@@ -192,7 +212,7 @@ function SmartView({
       )}
       <div className="command-preview">
         <span className="eyebrow">QUERY</span>
-        <code>smartctl -a -j /dev/{device.id}</code>
+        <code>smartctl -a -j {deviceType !== "auto" ? `-d ${deviceType} ` : ""}/dev/{device.id}</code>
         <span className="small-tag">NO SELF-TEST</span>
       </div>
       {result ? (
@@ -689,7 +709,7 @@ export function App() {
     };
   }, [policyOpen]);
 
-  async function runSmart() {
+  async function runSmart(deviceType = "auto") {
     if (
       !device ||
       device.metadataOnly ||
@@ -703,7 +723,7 @@ export function App() {
     setBusy(`Reading SMART · ${target.id}`);
     setError(null);
     try {
-      const result = await bridge.smart(target.token);
+      const result = await bridge.smart(target.token, deviceType);
       setSmart((items) => ({ ...items, [target.identityKey]: result }));
     } catch (error) {
       setError(errorText(error));
@@ -860,7 +880,7 @@ export function App() {
           <span className="brand-name">DRC</span>
           <span className="brand-divider" />
           <span className="brand-subtitle">Disk Recovery Control</span>
-          <span className="version">0.4.2</span>
+          <span className="version">0.4.3</span>
         </div>
         <div className="header-actions">
           <div className="mode-switch" aria-label="Workspace experience"><button aria-pressed={experience === "easy"} onClick={() => changeExperience("easy")}>Easy</button><button aria-pressed={experience === "professional"} onClick={() => changeExperience("professional")}>Professional</button></div>
@@ -1199,7 +1219,7 @@ export function App() {
                     device={device}
                     result={smart[device.identityKey]}
                     busy={!!busy || archived}
-                    run={() => void runSmart()}
+                    run={(deviceType) => void runSmart(deviceType)}
                   />
                 )}
                 {tab === "connection" && (
@@ -1322,7 +1342,7 @@ export function App() {
           <span className="status-separator">/</span>
           <span>{records.length} commands</span>
           <span className="status-separator">/</span>
-          <span>DRC 0.4.2</span>
+          <span>DRC 0.4.3</span>
         </div>
       </footer>
       {notice && (
@@ -1426,7 +1446,7 @@ export function App() {
       )}
       {evidenceOpen && <HostEvidence kernelAllowed={!archived} collectReport={collectHostEvidence} reports={hostEvidence} disabled={!!busy || archived} close={closeEvidence} onReport={report=>setHostEvidence(items=>[...items,report as unknown as Json])}/>}
       {referenceOpen && <CheatSheet platform={snapshot?.platform ?? (tools.some(t=>t.key === "lsblk") ? "Linux" : "macOS")} close={closeReference} copy={text=>navigator.clipboard.writeText(text)} />}
-      {easyReading && <Modal title={easyReading === "smart" ? "Reported SMART / NVMe readings" : "Port map"} subtitle="EXPLICIT QUERY / ORIGINAL FIELDS" close={closeEasyReading} wide className="readings-modal">{easyReading === "smart" && device ? <SmartView device={device} result={smart[device.identityKey]} busy={!!busy || archived} run={() => void runSmart()} /> : <ConnectionView platform={snapshot?.platform ?? (tools.some(t=>t.key === "lsblk") ? "Linux" : "macOS")} result={connection} busy={!!busy || archived} run={() => void runConnection()} />}</Modal>}
+      {easyReading && <Modal title={easyReading === "smart" ? "Reported SMART / NVMe readings" : "Port map"} subtitle="EXPLICIT QUERY / ORIGINAL FIELDS" close={closeEasyReading} wide className="readings-modal">{easyReading === "smart" && device ? <SmartView device={device} result={smart[device.identityKey]} busy={!!busy || archived} run={(deviceType) => void runSmart(deviceType)} /> : <ConnectionView platform={snapshot?.platform ?? (tools.some(t=>t.key === "lsblk") ? "Linux" : "macOS")} result={connection} busy={!!busy || archived} run={() => void runConnection()} />}</Modal>}
       {imageOpen && (
         <ImagePanel
           reports={imageReports}

@@ -12,7 +12,7 @@ it("shows binary bytes and exact offsets above JavaScript's safe integer range",
   expect(result).toContain("00 41 ff 0a");
   expect(result).toContain("|.A..|");
 });
-it("identifies file-backed stdout separately from the process output and retains signal status", () => {
+it("identifies file-backed stdout separately and retains supplied input and signal status", () => {
   const record: CommandRecord = {
     id: "test",
     program: "drc-tsk",
@@ -21,6 +21,7 @@ it("identifies file-backed stdout separately from the process output and retains
     durationMs: 2,
     exitCode: null,
     terminationSignal: 25,
+    stdin: "q\nq\n",
     timedOut: false,
     stdout: "",
     stderr: "original error",
@@ -49,4 +50,6 @@ it("identifies file-backed stdout separately from the process output and retains
   );
   expect(transcript(record)).toContain("signal=25");
   expect(transcript(record)).toContain("original error");
+  expect(transcript(record)).toContain("[stdin supplied]\n\nq\nq\n");
+  expect(record.stderr).toBe("original error");
 });

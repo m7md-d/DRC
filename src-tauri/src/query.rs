@@ -20,7 +20,11 @@ pub enum ReadQuery {
     Connections,
     UsbRegistry,
     UsbHostPorts,
-    SmartInfo { executable: String, device: String },
+    SmartInfo {
+        executable: String,
+        device: String,
+        device_type: Option<String>,
+    },
 }
 
 pub fn valid_device_id(id: &str) -> bool {
@@ -99,17 +103,23 @@ impl ReadQuery {
                     "-l".into(),
                 ],
             ),
-            Self::SmartInfo { executable, device }
-                if (if cfg!(target_os = "linux") {
-                    crate::linux::valid_id(device)
-                } else {
-                    valid_device_id(device)
-                }) && allowed_smart_path(executable) =>
+            Self::SmartInfo {
+                executable,
+                device,
+                device_type,
+            } if (if cfg!(target_os = "linux") {
+                crate::linux::valid_id(device)
+            } else {
+                valid_device_id(device)
+            }) && allowed_smart_path(executable)
+                && valid_smart_type(device_type.as_deref()) =>
             {
-                (
-                    executable.clone(),
-                    vec!["-a".into(), "-j".into(), format!("/dev/{device}")],
-                )
+                let mut arguments = vec!["-a".into(), "-j".into()];
+                if let Some(kind) = device_type.as_deref().filter(|kind| *kind != "auto") {
+                    arguments.extend(["-d".into(), kind.into()]);
+                }
+                arguments.push(format!("/dev/{device}"));
+                (executable.clone(), arguments)
             }
             _ => {
                 return Err(
@@ -119,6 +129,13 @@ impl ReadQuery {
         };
         Ok(command)
     }
+}
+
+pub fn valid_smart_type(kind: Option<&str>) -> bool {
+    matches!(
+        kind,
+        None | Some("auto" | "sat" | "scsi" | "nvme" | "sntasmedia" | "sntjmicron" | "sntrealtek")
+    )
 }
 
 pub fn allowed_smart_path(path: &str) -> bool {
@@ -155,6 +172,7 @@ pub fn execute(query: ReadQuery) -> Result<CommandRecord, String> {
         launch_error: None,
         stdout_artifact: None,
         termination_signal: None,
+        stdin: None,
     };
     let child = Command::new(&program)
         .args(&arguments)
@@ -190,13 +208,25 @@ pub fn execute(query: ReadQuery) -> Result<CommandRecord, String> {
         match child.try_wait() {
             Ok(Some(status)) => {
                 record.exit_code = status.code();
+                #[cfg(unix)]
+                {
+                    use std::os::unix::process::ExitStatusExt;
+                    record.termination_signal = status.signal();
+                }
                 break;
             }
             Ok(None) if start.elapsed() < timeout => std::thread::sleep(Duration::from_millis(20)),
             Ok(None) => {
                 record.timed_out = true;
                 let _ = child.kill();
-                record.exit_code = child.wait().ok().and_then(|s| s.code());
+                if let Ok(status) = child.wait() {
+                    record.exit_code = status.code();
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::process::ExitStatusExt;
+                        record.termination_signal = status.signal();
+                    }
+                }
                 break;
             }
             Err(error) => {
@@ -255,12 +285,50 @@ mod tests {
         let query = ReadQuery::SmartInfo {
             executable: "/opt/homebrew/bin/smartctl".into(),
             device: "disk3".into(),
+            device_type: None,
         };
         assert_eq!(query.command().unwrap().1, ["-a", "-j", "/dev/disk3"]);
         let rogue = ReadQuery::SmartInfo {
             executable: "/tmp/smartctl".into(),
             device: "disk3".into(),
+            device_type: None,
         };
         assert!(rogue.command().is_err());
+        for kind in [
+            "auto",
+            "sat",
+            "scsi",
+            "nvme",
+            "sntasmedia",
+            "sntjmicron",
+            "sntrealtek",
+        ] {
+            let mode = ReadQuery::SmartInfo {
+                executable: "/opt/homebrew/bin/smartctl".into(),
+                device: "disk3".into(),
+                device_type: Some(kind.into()),
+            };
+            let (_, args) = mode.command().unwrap();
+            assert_eq!(&args[..2], ["-a", "-j"]);
+            assert_eq!(args.last().unwrap(), "/dev/disk3");
+            if kind != "auto" {
+                assert_eq!(&args[2..4], ["-d", kind]);
+            }
+        }
+        for kind in [
+            "",
+            "sat --set=security",
+            "sntjmicron,0xffffffff",
+            "-t",
+            "auto\n",
+            "nvme;reset",
+        ] {
+            let mode = ReadQuery::SmartInfo {
+                executable: "/opt/homebrew/bin/smartctl".into(),
+                device: "disk3".into(),
+                device_type: Some(kind.into()),
+            };
+            assert!(mode.command().is_err());
+        }
     }
 }

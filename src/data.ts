@@ -85,6 +85,7 @@ export function commandLine(
 
 export function transcript(record: CommandRecord): string {
   const details = [`$ ${commandLine(record)}`, "", record.stdout];
+  if (record.stdin) details.push("\n[stdin supplied]\n", record.stdin);
   if (record.stdoutArtifact) {
     const a = record.stdoutArtifact;
     details.push(

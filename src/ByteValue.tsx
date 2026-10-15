@@ -53,6 +53,7 @@ const byteFields = new Set([
   "nontrimmedbytes",
   "nonscrapedbytes",
   "badsectorbytes",
+  "unmappedbytes",
   "finishedbytes",
   "bytes",
   "deviceblocksize",

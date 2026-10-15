@@ -25,6 +25,7 @@ export interface CommandRecord {
     entryIndex: number;
   } | null;
   terminationSignal?: number | null;
+  stdin?: string | null;
 }
 
 export interface Device {
@@ -169,6 +170,8 @@ export interface AcquisitionSettings {
   reverse?: boolean;
   timeoutSeconds: number;
   maxReadRate: string | null;
+  clusterSectors?: number | null;
+  maxReadErrors?: number | null;
 }
 export interface AcquisitionRequest {
   kind: "image" | "physical";
@@ -198,6 +201,7 @@ export interface MapSummary {
   nonScrapedBytes: string;
   badSectorBytes: string;
   domainBytes: string;
+  unmappedBytes?: string;
   blocks: { position: string; size: string; status: string }[];
 }
 export interface AcquisitionJob {
@@ -214,6 +218,7 @@ export interface AcquisitionJob {
   createdAt: number;
   updatedAt: number;
   exitCode: number | null;
+  latestRecord?: CommandRecord | null;
   message: string | null;
   map: MapSummary | null;
   attempts: number;

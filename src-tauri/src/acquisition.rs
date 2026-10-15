@@ -8,13 +8,17 @@ use crate::{
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 #[cfg(unix)]
-use std::os::unix::{fs::OpenOptionsExt, io::AsRawFd, process::CommandExt};
+use std::os::unix::{
+    fs::OpenOptionsExt,
+    io::AsRawFd,
+    process::{CommandExt, ExitStatusExt},
+};
 use std::{
     collections::HashMap,
     fs::{File, OpenOptions},
     io::{Read, Write},
     path::Path,
-    process::{Command, Stdio},
+    process::{ChildStdin, Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex,
@@ -46,6 +50,10 @@ pub struct Settings {
     pub reverse: bool,
     pub timeout_seconds: u32,
     pub max_read_rate: Option<String>,
+    #[serde(default)]
+    pub cluster_sectors: Option<u32>,
+    #[serde(default)]
+    pub max_read_errors: Option<u32>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -65,7 +73,13 @@ pub struct MapSummary {
     pub non_scraped_bytes: String,
     pub bad_sector_bytes: String,
     pub domain_bytes: String,
+    #[serde(default = "zero_bytes")]
+    pub unmapped_bytes: String,
     pub blocks: Vec<MapBlock>,
+}
+
+fn zero_bytes() -> String {
+    "0".into()
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -202,6 +216,18 @@ fn validate_settings(settings: &mut Settings, total: u64) -> Result<(), String> 
             );
         }
     }
+    if settings
+        .cluster_sectors
+        .is_some_and(|n| !(1..=2048).contains(&n))
+    {
+        return Err("Read cluster size must be 1–2048 logical sectors, or tool default.".into());
+    }
+    if settings
+        .max_read_errors
+        .is_some_and(|n| !(1..=100_000).contains(&n))
+    {
+        return Err("The read-error limit must be 1–100000, or left unset.".into());
+    }
     settings.length = Some(length.to_string());
     Ok(())
 }
@@ -239,6 +265,12 @@ pub fn arguments(
     if let Some(rate) = &settings.max_read_rate {
         args.push(format!("--max-read-rate={rate}"));
     }
+    if let Some(sectors) = settings.cluster_sectors {
+        args.push(format!("--cluster-size={sectors}"));
+    }
+    if let Some(errors) = settings.max_read_errors {
+        args.push(format!("--max-read-errors={errors}"));
+    }
     args.extend(["--".into(), input.into(), output.into(), map.into()]);
     args
 }
@@ -248,7 +280,7 @@ pub fn resume_settings(job: &Job, mut requested: Settings) -> Result<Settings, S
         || requested.length != job.settings.length
         || requested.sector_size != job.settings.sector_size
     {
-        return Err("A resumed image must retain its original offset, length and logical sector size. Only direction, read phases, retries, timeout and rate cap may change.".into());
+        return Err("A resumed image must retain its original offset, length and logical sector size. Only direction, read phases, retries, timeout, cluster size, error limit and rate cap may change.".into());
     }
     validate_settings(&mut requested, decimal(&job.source_size, "Source size")?)?;
     Ok(requested)
@@ -304,6 +336,13 @@ impl Manager {
             return Err("An acquisition already holds the source/destination lock.".into());
         }
         validate_settings(&mut settings, total)?;
+        if matches!(&source, Source::Physical { .. })
+            && (!total.is_multiple_of(u64::from(settings.sector_size))
+                || !decimal(settings.length.as_deref().unwrap(), "Length")?
+                    .is_multiple_of(u64::from(settings.sector_size)))
+        {
+            return Err("Physical source capacity and range length must align with its reported logical sector size. No partial-sector physical read is admitted.".into());
+        }
         #[cfg(unix)]
         if unsafe { libc::fcntl(input.as_raw_fd(), libc::F_GETFL) } & libc::O_ACCMODE
             != libc::O_RDONLY
@@ -570,6 +609,12 @@ impl Manager {
                     job.message.as_deref().unwrap_or("Operation stopped")
                 ));
                 job.state = "failed".into();
+                if let Err(local_error) = store.save_job(&job.id, &job) {
+                    job.message = Some(format!(
+                        "{}; local journal error: {local_error}",
+                        job.message.as_deref().unwrap_or("Operation stopped")
+                    ));
+                }
             }
             if let Ok(mut active) = manager.active.lock() {
                 *active = None;
@@ -643,6 +688,9 @@ pub fn read_regular(path: &Path) -> Result<Vec<u8>, String> {
 }
 
 fn save_job(store: &Store, job: &Job) -> Result<(), String> {
+    // The local journal must retain the final state even if the external
+    // destination disappears. No external path is touched before admission.
+    store.save_job(&job.id, job)?;
     let current = policy::path_identity(Path::new(&job.directory))?;
     if current.device != job.directory_identity.device
         || current.inode != job.directory_identity.inode
@@ -651,7 +699,6 @@ fn save_job(store: &Store, job: &Job) -> Result<(), String> {
             "The acquisition directory was moved or replaced. Artifact writes are blocked.".into(),
         );
     }
-    store.save_job(&job.id, job)?;
     let temp = Path::new(&job.directory).join("manifest.tmp");
     let mut options = OpenOptions::new();
     options.write(true).create(true).truncate(true);
@@ -697,6 +744,7 @@ fn run(
         launch_error: None,
         stdout_artifact: None,
         termination_signal: None,
+        stdin: None,
     };
     let outcome = (|| -> Result<(), String> {
         #[cfg(not(unix))]
@@ -737,11 +785,14 @@ fn run(
                 "rescue.map",
                 &rate_name,
             );
+            // Set up both transcripts before the tool can start reading data.
+            let stdout_files = open_spool(Path::new(&job.stdout_path), job.attempts)?;
+            let stderr_files = open_spool(Path::new(&job.stderr_path), job.attempts)?;
             let mut command = Command::new(&program);
             command
                 .args(&record.arguments)
                 .env("LC_ALL", "C")
-                .stdin(Stdio::null())
+                .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
             // SAFETY: pre_exec only makes async-signal-safe POSIX calls. The source
@@ -758,25 +809,35 @@ fn run(
                 });
             }
             let mut child = command.spawn().map_err(|e| e.to_string())?;
+            let control = Arc::new(MapAbortControl {
+                input: Mutex::new(
+                    child
+                        .stdin
+                        .take()
+                        .ok_or("Missing acquisition control input")?,
+                ),
+                tail: Mutex::new(Vec::new()),
+                supplied: Mutex::new(String::new()),
+            });
             let stdout = child.stdout.take().ok_or("Missing acquisition stdout")?;
             let stderr = child.stderr.take().ok_or("Missing acquisition stderr")?;
-            let out = match spool(stdout, Path::new(&job.stdout_path), job.attempts) {
-                Ok(reader) => reader,
-                Err(error) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(error);
-                }
-            };
-            let err = match spool(stderr, Path::new(&job.stderr_path), job.attempts) {
-                Ok(reader) => reader,
-                Err(error) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    let _ = out.join();
-                    return Err(error);
-                }
-            };
+            let io_errors = Arc::new(Mutex::new(Vec::<String>::new()));
+            let out = spool(
+                stdout,
+                stdout_files,
+                "stdout",
+                stop.clone(),
+                io_errors.clone(),
+                None,
+            );
+            let err = spool(
+                stderr,
+                stderr_files,
+                "stderr",
+                stop.clone(),
+                io_errors.clone(),
+                Some(control.clone()),
+            );
             let mut signalled = false;
             let mut last = Instant::now();
             let mut save_failure: Option<String> = None;
@@ -787,12 +848,20 @@ fn run(
                     }
                     signalled = true;
                     job.state = "pausing".into();
-                    job.message=Some("SIGINT requested. Waiting for ddrescue to save its mapfile and exit; kernel I/O can delay this.".into());
+                    let reason = io_errors
+                        .lock()
+                        .ok()
+                        .filter(|e| !e.is_empty())
+                        .map(|e| format!("Log persistence failed: {}. ", e.join("; ")))
+                        .unwrap_or_default();
+                    job.message=Some(format!("{reason}SIGINT requested. Waiting for ddrescue to save its mapfile and exit; kernel I/O can delay this."));
                     job.updated_at = now_ms();
                     sink(job.clone(), None);
                 }
                 if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
                     record.exit_code = status.code();
+                    record.termination_signal = status.signal();
+                    job.exit_code = record.exit_code;
                     break;
                 }
                 if last.elapsed() >= Duration::from_secs(1) {
@@ -802,6 +871,7 @@ fn run(
                     update_rates(job, true);
                     record.duration_ms = started.elapsed().as_millis() as u64;
                     update_record(&mut record, job);
+                    record.stdin = control.supplied_input();
                     job.latest_record = Some(record.clone());
                     if let Err(e) = save_job(store, job) {
                         save_failure = Some(e);
@@ -812,18 +882,38 @@ fn run(
                 }
                 std::thread::sleep(Duration::from_millis(50));
             }
-            let out_result = out.join().map_err(|_| "stdout spool failed")?;
-            let err_result = err.join().map_err(|_| "stderr spool failed")?;
-            out_result?;
-            err_result?;
-            policy::open_readonly(Path::new(&job.image_path))?
-                .sync_all()
-                .map_err(|e| e.to_string())?;
-            let fresh_artifacts = update_artifacts(job);
+            let mut persistence_errors = Vec::new();
+            for (name, reader) in [("stdout", out), ("stderr", err)] {
+                match reader.join() {
+                    Ok(Ok(())) => {}
+                    Ok(Err(e)) => persistence_errors.push(e),
+                    Err(_) => persistence_errors.push(format!(
+                        "{name} spool thread failed; original output may be incomplete"
+                    )),
+                }
+            }
+            record.stdin = control.supplied_input();
+            let flush = policy::open_readonly(Path::new(&job.image_path))
+                .and_then(|image| image.sync_all().map_err(|e| e.to_string()));
+            // Harvest and seal readable artifacts even when a transcript or
+            // image flush failed. A persistence failure still prevents success.
+            let fresh_artifacts = match observe_after_flush(job, flush) {
+                Ok(fresh) => fresh,
+                Err(error) => {
+                    persistence_errors.push(error);
+                    false
+                }
+            };
             if fresh_artifacts {
                 sample_progress(job, started.elapsed().as_millis() as u64);
             }
             update_rates(job, false);
+            if let Some(error) = save_failure {
+                persistence_errors.push(format!("Acquisition persistence failed: {error}"));
+            }
+            if !persistence_errors.is_empty() {
+                return Err(format!("{}. Readable image/map artifacts were retained for review; transcript bytes may be incomplete. No automatic resume.", persistence_errors.join("; ")));
+            }
             if !fresh_artifacts {
                 return Err("The final mapfile and original image destination could not be verified. Previous observations cannot establish completion.".into());
             }
@@ -857,12 +947,15 @@ fn run(
                 Some("The mapfile marks every byte in the requested range as finished (+).".into())
             } else if job.state == "paused" {
                 Some("Stopped with a saved mapfile. Resume requires a new source/destination review.".into())
+            } else if job
+                .map
+                .as_ref()
+                .is_some_and(|map| map.unmapped_bytes != "0")
+            {
+                Some(format!("{} bytes in the reviewed range are outside the recorded map. No copied status is assigned to them. Review the map and original output before resuming.", job.map.as_ref().unwrap().unmapped_bytes))
             } else {
                 Some("Inspect the exit status, mapfile and original output. No automatic retry or reconnect is performed.".into())
             };
-            if let Some(error) = save_failure {
-                return Err(format!("Acquisition persistence failed: {error}"));
-            }
         }
         Ok(())
     })();
@@ -878,40 +971,149 @@ fn run(
     record
 }
 
-fn spool<R: Read + Send + 'static>(
-    mut input: R,
-    path: &Path,
-    attempt: u32,
-) -> Result<std::thread::JoinHandle<Result<(), String>>, String> {
+fn open_spool(path: &Path, attempt: u32) -> Result<[File; 2], String> {
     let mut options = OpenOptions::new();
     options.write(true).create(true).append(true);
     #[cfg(unix)]
     options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
-    let mut file = options.open(path).map_err(|e| e.to_string())?;
+    let file = options.open(path).map_err(|e| e.to_string())?;
     // Each attempt keeps its own original bytes; aggregate stream files retain all attempts.
     let attempt_path = path.with_file_name(format!(
         "{}-attempt-{attempt}.bin",
         path.file_stem().unwrap_or_default().to_string_lossy()
     ));
-    let mut separate = OpenOptions::new()
-        .write(true)
-        .create_new(true)
+    let mut separate_options = OpenOptions::new();
+    separate_options.write(true).create_new(true);
+    #[cfg(unix)]
+    separate_options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+    let separate = separate_options
         .open(attempt_path)
         .map_err(|e| e.to_string())?;
-    Ok(std::thread::spawn(move || {
-        let mut bytes = [0; 8192];
-        loop {
-            let n = input.read(&mut bytes).map_err(|e| e.to_string())?;
-            if n == 0 {
-                break;
-            }
-            file.write_all(&bytes[..n]).map_err(|e| e.to_string())?;
-            separate.write_all(&bytes[..n]).map_err(|e| e.to_string())?;
-            file.sync_data().map_err(|e| e.to_string())?;
+    Ok([file, separate])
+}
+
+// Keep draining after a persistence failure so SIGINT can reach the tool and
+// it can save its map. Retain any still-writable transcript; never grow memory
+// without bound or silently claim that a failed transcript is complete.
+fn drain_stream<R: Read>(
+    mut input: R,
+    mut persist: impl FnMut(&[u8]) -> Result<(), String>,
+) -> Result<(), String> {
+    let mut first_error = None;
+    let mut bytes = [0; 8192];
+    loop {
+        let n = match input.read(&mut bytes) {
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(first_error.unwrap_or_else(|| e.to_string())),
+            Ok(n) => n,
+        };
+        if n == 0 {
+            break;
         }
-        separate.sync_all().map_err(|e| e.to_string())?;
-        file.sync_all().map_err(|e| e.to_string())
-    }))
+        if let Err(e) = persist(&bytes[..n]) {
+            first_error.get_or_insert(e);
+        }
+    }
+    first_error.map_or(Ok(()), Err)
+}
+
+fn spool<R: Read + Send + 'static>(
+    input: R,
+    files: [File; 2],
+    label: &'static str,
+    stop: Arc<AtomicBool>,
+    errors: Arc<Mutex<Vec<String>>>,
+    control: Option<Arc<MapAbortControl>>,
+) -> std::thread::JoinHandle<Result<(), String>> {
+    std::thread::spawn(move || {
+        let mut files = files.map(Some);
+        let outcome = drain_stream(input, |bytes| {
+            let mut failed = Vec::new();
+            if let Some(control) = &control {
+                match control.observe(bytes) {
+                    Ok(0) => {}
+                    Ok(_) => failed.push(
+                        "ddrescue could not save its mapfile; q+Enter supplied to abort the prompt"
+                            .into(),
+                    ),
+                    Err(e) => failed.push(format!("Mapfile-abort control failed: {e}")),
+                }
+            }
+            for (index, target) in files.iter_mut().enumerate() {
+                if let Some(file) = target {
+                    if let Err(e) = file.write_all(bytes).and_then(|_| file.sync_data()) {
+                        failed.push(format!(
+                            "{label} {} log write/flush failed: {e}",
+                            if index == 0 { "aggregate" } else { "attempt" }
+                        ));
+                        *target = None;
+                    }
+                }
+            }
+            if !failed.is_empty() {
+                if let Ok(mut saved) = errors.lock() {
+                    saved.extend(failed.clone());
+                }
+                stop.store(true, Ordering::SeqCst);
+                return Err(failed.join("; "));
+            }
+            Ok(())
+        });
+        if outcome.is_err() {
+            stop.store(true, Ordering::SeqCst);
+        }
+        for file in files.into_iter().flatten() {
+            if let Err(e) = file.sync_all() {
+                return Err(format!("{label} final log flush failed: {e}"));
+            }
+        }
+        outcome
+    })
+}
+
+const MAP_ABORT_PROMPT: &[u8] = b"or Q+ENTER to abort.\n";
+
+fn map_abort_requests(tail: &mut Vec<u8>, bytes: &[u8]) -> usize {
+    tail.extend_from_slice(bytes);
+    let matches = tail
+        .windows(MAP_ABORT_PROMPT.len())
+        .filter(|w| *w == MAP_ABORT_PROMPT)
+        .count();
+    let keep = tail.len().min(MAP_ABORT_PROMPT.len() - 1);
+    tail.drain(..tail.len() - keep);
+    matches
+}
+
+struct MapAbortControl {
+    input: Mutex<ChildStdin>,
+    tail: Mutex<Vec<u8>>,
+    supplied: Mutex<String>,
+}
+
+impl MapAbortControl {
+    fn observe(&self, bytes: &[u8]) -> Result<usize, String> {
+        let requests = {
+            let mut tail = self.tail.lock().map_err(|e| e.to_string())?;
+            map_abort_requests(&mut tail, bytes)
+        };
+        if requests > 0 {
+            let mut input = self.input.lock().map_err(|e| e.to_string())?;
+            let mut supplied = self.supplied.lock().map_err(|e| e.to_string())?;
+            for _ in 0..requests {
+                input.write_all(b"q\n").map_err(|e| e.to_string())?;
+                supplied.push_str("q\n");
+            }
+            input.flush().map_err(|e| e.to_string())?;
+        }
+        Ok(requests)
+    }
+    fn supplied_input(&self) -> Option<String> {
+        self.supplied
+            .lock()
+            .ok()
+            .filter(|s| !s.is_empty())
+            .map(|s| s.clone())
+    }
 }
 
 fn update_record(record: &mut CommandRecord, job: &Job) {
@@ -948,6 +1150,7 @@ fn update_record(record: &mut CommandRecord, job: &Job) {
 /// capacity, the correctness of successful device responses, or full-disk scope.
 fn completion_verified(job: &Job, fresh: bool) -> bool {
     fresh
+        && job.map_digest.is_some()
         && job
             .map
             .as_ref()
@@ -956,6 +1159,19 @@ fn completion_verified(job: &Job, fresh: bool) -> bool {
             .image_identity
             .as_ref()
             .is_some_and(|image| image.size == job.source_size)
+}
+
+fn observe_after_flush(job: &mut Job, flush: Result<(), String>) -> Result<bool, String> {
+    let fresh = update_artifacts(job);
+    if let Err(error) = flush {
+        // Readable map observations do not establish durability of data whose
+        // flush failed. Preserve them, but block completion and trusted resume.
+        job.map_digest = None;
+        return Err(format!(
+            "Image flush failed: {error}. Image durability is unverified; resume seal cleared"
+        ));
+    }
+    Ok(fresh)
 }
 fn update_artifacts(job: &mut Job) -> bool {
     let observation = (|| -> Result<(MapSummary, String, FileIdentity), String> {
@@ -1130,8 +1346,10 @@ pub fn parse_map(bytes: &[u8], settings: &Settings, total: &str) -> Result<MapSu
         let position = number(fields[0])?;
         let size = number(fields[1])?;
         let block_end = position.checked_add(size).ok_or("Map block overflow")?;
-        if size == 0 || position < last_end {
-            return Err("Mapfile contains overlapping, unordered or empty blocks".into());
+        if size == 0 || position < last_end || (!blocks.is_empty() && position != last_end) {
+            return Err(
+                "Mapfile contains overlapping, unordered, empty or internally gapped blocks".into(),
+            );
         }
         last_end = block_end;
         let index = match fields[2] {
@@ -1153,8 +1371,8 @@ pub fn parse_map(bytes: &[u8], settings: &Settings, total: &str) -> Result<MapSu
             status: fields[2].into(),
         });
     }
-    if !header || blocks.is_empty() || covered != length {
-        return Err("Mapfile does not cover the requested range exactly".into());
+    if !header || blocks.is_empty() {
+        return Err("Mapfile contains no valid block observations".into());
     }
     Ok(MapSummary {
         rescued_bytes: sums[0].to_string(),
@@ -1163,6 +1381,7 @@ pub fn parse_map(bytes: &[u8], settings: &Settings, total: &str) -> Result<MapSu
         non_scraped_bytes: sums[3].to_string(),
         bad_sector_bytes: sums[4].to_string(),
         domain_bytes: length.to_string(),
+        unmapped_bytes: (length - covered).to_string(),
         blocks,
     })
 }
@@ -1193,6 +1412,8 @@ mod tests {
             reverse: false,
             timeout_seconds: 30,
             max_read_rate: None,
+            cluster_sectors: None,
+            max_read_errors: None,
         }
     }
     #[test]
@@ -1202,7 +1423,186 @@ mod tests {
         assert_eq!(map.non_tried_bytes, "256");
         assert_eq!(map.bad_sector_bytes, "64");
         assert!(parse_map(b"0 ? 1\n0 512 +\n256 512 +", &settings(), "1024").is_err());
-        assert!(parse_map(b"0 ? 1\n0 512 +", &settings(), "1024").is_err());
+        let short = parse_map(b"0 ? 1\n0 512 +", &settings(), "1024").unwrap();
+        assert_eq!(short.rescued_bytes, "512");
+        assert_eq!(short.domain_bytes, "1024");
+        assert_eq!(short.unmapped_bytes, "512");
+        assert!(parse_map(b"0 ? 1\n0 256 +\n512 512 ?", &settings(), "1024").is_err());
+    }
+
+    #[test]
+    fn map_abort_prompt_survives_every_split_and_does_not_match_partial_text() {
+        for split in 0..=MAP_ABORT_PROMPT.len() {
+            let mut tail = Vec::new();
+            let before = map_abort_requests(&mut tail, &MAP_ABORT_PROMPT[..split]);
+            let after = map_abort_requests(&mut tail, &MAP_ABORT_PROMPT[split..]);
+            assert_eq!(before + after, 1);
+            assert!(tail.len() < MAP_ABORT_PROMPT.len());
+            assert_eq!(map_abort_requests(&mut tail, b"unrelated output\n"), 0);
+        }
+        let mut tail = Vec::new();
+        let two = [MAP_ABORT_PROMPT, MAP_ABORT_PROMPT].concat();
+        assert_eq!(map_abort_requests(&mut tail, &two), 2);
+        assert_eq!(map_abort_requests(&mut tail, b"or Q+ENTER to abor"), 0);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn map_abort_control_answers_repeated_prompts_and_records_exact_input() {
+        let root = std::env::temp_dir().join(crate::model::unique_id("drc-map-control"));
+        std::fs::create_dir(&root).unwrap();
+        // A bounded, generated protocol peer; no storage device is opened.
+        let mut child = Command::new("/bin/sh").args(["-c", "for n in 1 2; do printf 'or Q+ENTER to abort.\\n' >&2; IFS= read -r answer; [ \"$answer\" = q ] || exit 9; done"])
+            .stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::piped()).spawn().unwrap();
+        let control = Arc::new(MapAbortControl {
+            input: Mutex::new(child.stdin.take().unwrap()),
+            tail: Mutex::new(Vec::new()),
+            supplied: Mutex::new(String::new()),
+        });
+        let stop = Arc::new(AtomicBool::new(false));
+        let reader = spool(
+            child.stderr.take().unwrap(),
+            open_spool(&root.join("stderr.bin"), 1).unwrap(),
+            "stderr",
+            stop.clone(),
+            Arc::new(Mutex::new(Vec::new())),
+            Some(control.clone()),
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            if Instant::now() >= deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("Map control did not answer its bounded peer");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert!(status.success());
+        assert!(reader.join().unwrap().is_err());
+        assert!(stop.load(Ordering::SeqCst));
+        assert_eq!(control.supplied_input().as_deref(), Some("q\nq\n"));
+        assert_eq!(
+            std::fs::read(root.join("stderr-attempt-1.bin")).unwrap(),
+            [MAP_ABORT_PROMPT, MAP_ABORT_PROMPT].concat()
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn partial_map_retains_finished_prefix_without_inventing_tail_status() {
+        let (root, mut job) = artifact_fixture(1024, "0 + 1\n0 512 +\n");
+        assert!(update_artifacts(&mut job));
+        let map = job.map.as_ref().unwrap();
+        assert_eq!(map.rescued_bytes, "512");
+        assert_eq!(map.unmapped_bytes, "512");
+        assert_eq!(map.non_tried_bytes, "0");
+        assert_eq!(map.blocks.len(), 1);
+        assert!(!completion_verified(&job, true));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failed_image_flush_retains_readings_but_blocks_completion_and_resume() {
+        let (root, mut job) = artifact_fixture(1024, "0 + 1\n0 1024 +\n");
+        job.state = "failed".into();
+        assert!(observe_after_flush(&mut job, Ok(())).unwrap());
+        assert!(verify_resume(&job, &job.directory_identity).is_ok());
+        assert!(completion_verified(&job, true));
+        assert!(observe_after_flush(&mut job, Err("injected EIO".into())).is_err());
+        assert_eq!(job.map.as_ref().unwrap().rescued_bytes, "1024");
+        assert!(job.map_digest.is_none());
+        assert!(!completion_verified(&job, true));
+        assert!(verify_resume(&job, &job.directory_identity).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn destination_replacement_keeps_local_failure_state_without_writing_replacement() {
+        let (root, mut job) = artifact_fixture(1024, "0 + 1\n0 512 +\n512 512 ?\n");
+        let journal = std::env::temp_dir().join(crate::model::unique_id("drc-local-journal"));
+        let store = Store::open(&journal).unwrap();
+        job.state = "failed".into();
+        job.message = Some("Destination unavailable".into());
+        let moved = root.with_extension("original");
+        std::fs::rename(&root, &moved).unwrap();
+        std::fs::create_dir(&root).unwrap();
+        assert!(save_job(&store, &job).is_err());
+        let saved = store.jobs::<Job>().unwrap().remove(0);
+        assert_eq!(saved.state, "failed");
+        assert_eq!(saved.message.as_deref(), Some("Destination unavailable"));
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 0);
+        drop(store);
+        for dir in [root, moved, journal] {
+            std::fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn failed_transcript_requests_stop_but_drains_and_preserves_healthy_copy() {
+        let root = std::env::temp_dir().join(crate::model::unique_id("drc-spool-fault"));
+        std::fs::create_dir(&root).unwrap();
+        let broken = root.join("readonly-log.bin");
+        let healthy = root.join("attempt-log.bin");
+        std::fs::write(&broken, b"original log").unwrap();
+        let payload = vec![b'x'; 1024 * 1024];
+        let stop = Arc::new(AtomicBool::new(false));
+        let errors = Arc::new(Mutex::new(Vec::new()));
+        let reader = spool(
+            std::io::Cursor::new(payload.clone()),
+            [
+                File::open(&broken).unwrap(),
+                OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&healthy)
+                    .unwrap(),
+            ],
+            "stdout",
+            stop.clone(),
+            errors.clone(),
+            None,
+        );
+        assert!(reader.join().unwrap().is_err());
+        assert!(stop.load(Ordering::SeqCst));
+        assert_eq!(errors.lock().unwrap().len(), 1);
+        assert_eq!(std::fs::read(&healthy).unwrap(), payload);
+        assert_eq!(std::fs::read(&broken).unwrap(), b"original log");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn read_controls_are_bounded_and_do_not_change_resume_domain() {
+        let mut config = settings();
+        config.cluster_sectors = Some(1);
+        config.max_read_errors = Some(5);
+        validate_settings(&mut config, 1024).unwrap();
+        let args = arguments(
+            &config,
+            "1024",
+            "/dev/fd/3",
+            "image.raw",
+            "rescue.map",
+            "rates.log",
+        );
+        assert!(args.contains(&"--cluster-size=1".into()));
+        assert!(args.contains(&"--max-read-errors=5".into()));
+        for n in [0, 2049, u32::MAX] {
+            let mut invalid = config.clone();
+            invalid.cluster_sectors = Some(n);
+            assert!(validate_settings(&mut invalid, 1024).is_err());
+        }
+        for n in [0, 100001, u32::MAX] {
+            let mut invalid = config.clone();
+            invalid.max_read_errors = Some(n);
+            assert!(validate_settings(&mut invalid, 1024).is_err());
+        }
+        let (root, job) = artifact_fixture(1024, "0 + 1\n0 1024 +\n");
+        assert!(resume_settings(&job, config.clone()).is_ok());
+        config.length = Some("512".into());
+        assert!(resume_settings(&job, config).is_err());
+        std::fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn fixed_arguments_never_enable_writes_to_source_or_overwrite_devices() {

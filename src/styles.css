@@ -335,6 +335,12 @@
 [data-map-status="-"] {
   background: var(--error-border);
 }
+[data-map-status="unmapped"] {
+  background: repeating-linear-gradient(135deg, var(--muted) 0 2px, transparent 2px 5px);
+  border: 1px solid var(--border);
+}
+.smart-transport-options { margin: 0 0 20px; }
+.smart-transport-options > .form-field { max-width: 420px; margin-top: 14px; }
 .map-counts {
   display: flex;
   flex-direction: column;

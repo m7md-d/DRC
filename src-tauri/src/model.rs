@@ -32,6 +32,8 @@ pub struct CommandRecord {
     pub stdout_artifact: Option<StreamArtifact>,
     #[serde(default)]
     pub termination_signal: Option<i32>,
+    #[serde(default)]
+    pub stdin: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -105,8 +107,10 @@ pub struct DeviceEvent {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct DeviceRequest {
+pub struct SmartRequest {
     pub token: String,
+    #[serde(default)]
+    pub device_type: Option<String>,
 }
 
 pub fn now_ms() -> u64 {

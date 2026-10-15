@@ -571,6 +571,7 @@ fn run(
                 launch_error: None,
                 stdout_artifact: None,
                 termination_signal: None,
+                stdin: None,
             };
             let mut command = Command::new(program);
             command

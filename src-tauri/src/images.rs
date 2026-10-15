@@ -348,6 +348,7 @@ fn run_read(input: &File, request: &Request, total: &str) -> Result<CommandRecor
             launch_error: None,
             stdout_artifact: None,
             termination_signal: None,
+            stdin: None,
         };
         let mut command = Command::new(program);
         command

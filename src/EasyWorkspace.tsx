@@ -334,11 +334,16 @@ export function EasyWorkspace({
                   <ByteValue value={job.map?.badSectorBytes} />
                 </strong>
               </div>
+              {job.map && BigInt(job.map.unmappedBytes ?? "0") > 0n && <div data-hint="These bytes belong to the reviewed range but have no block entry in the saved map. No successful or failed-read status is invented for them.">
+                <span>Outside recorded map</span>
+                <strong><ByteValue value={job.map.unmappedBytes}/></strong>
+              </div>}
               <div>
                 <span>Image path</span>
                 <code>{job.imagePath}</code>
               </div>
             </div>
+            {job.message && <p className="panel-description">{job.message}</p>}
             <AcquisitionCharts job={job} />
           </section>
         )}

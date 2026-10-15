@@ -38,8 +38,8 @@ export const bridge = {
   hostEvidence: (kind: "topology" | "kernel") => request<QueryResult>("read_host_evidence", { kind }),
   discover: () => request<Discovery>("discover_devices"),
   tools: () => request<ToolReport[]>("installed_tools"),
-  smart: (token: string) =>
-    request<QueryResult>("read_smart", { request: { token } }),
+  smart: (token: string, deviceType = "auto") =>
+    request<QueryResult>("read_smart", { request: { token, deviceType } }),
   connections: () => request<QueryResult>("read_connections"),
   startWatch: () => request<void>("start_device_watch"),
   stopWatch: () => request<void>("stop_device_watch"),

@@ -10,6 +10,7 @@ pub trait PlatformBackend: Send + Sync {
     fn smart(
         &self,
         device: &Device,
+        device_type: Option<&str>,
         record: &mut dyn FnMut(CommandRecord),
     ) -> Result<QueryResult, String>;
 }
@@ -186,6 +187,7 @@ impl PlatformBackend for MacOsBackend {
     fn smart(
         &self,
         device: &Device,
+        device_type: Option<&str>,
         record_sink: &mut dyn FnMut(CommandRecord),
     ) -> Result<QueryResult, String> {
         if device.info.is_null() {
@@ -207,6 +209,7 @@ impl PlatformBackend for MacOsBackend {
         let record = execute(ReadQuery::SmartInfo {
             executable,
             device: device.id.clone(),
+            device_type: device_type.map(str::to_owned),
         })?;
         // smartctl exit status is a bitmask: retain JSON even when the exit code is nonzero.
         let parsed = serde_json::from_str::<Value>(&record.stdout).map(exact_json);
