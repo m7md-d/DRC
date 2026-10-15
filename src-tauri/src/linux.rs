@@ -323,6 +323,7 @@ impl PlatformBackend for LinuxBackend {
     fn smart(
         &self,
         device: &Device,
+        device_type: Option<&str>,
         sink: &mut dyn FnMut(CommandRecord),
     ) -> Result<QueryResult, String> {
         let fresh = read_info(&device.id, sink)?;
@@ -334,6 +335,7 @@ impl PlatformBackend for LinuxBackend {
         let record = query::execute(ReadQuery::SmartInfo {
             executable,
             device: device.id.clone(),
+            device_type: device_type.map(str::to_owned),
         })?;
         let parsed = serde_json::from_str::<Value>(&record.stdout).map(exact_json);
         let (fields, parse_error) = match parsed {

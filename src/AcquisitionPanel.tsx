@@ -6,7 +6,7 @@ import { FieldTable } from "./FieldTable";
 import { Select } from "./Select";
 import { AcquisitionCharts } from "./AcquisitionCharts";
 import { ByteValue } from "./ByteValue";
-import { commandLine, canAcquireDevice } from "./data";
+import { commandLine, canAcquireDevice, humanBytes } from "./data";
 import type {
   AcquisitionJob,
   AcquisitionPlan,
@@ -23,6 +23,8 @@ const defaults: AcquisitionSettings = {
   copyingOnly: true,
   timeoutSeconds: 30,
   maxReadRate: null,
+  clusterSectors: null,
+  maxReadErrors: null,
 };
 const sourceLabel = (source: AcquisitionJob["source"], platform = "macOS") =>
   source.kind === "image"
@@ -105,6 +107,8 @@ export function AcquisitionPanel({
               retryPasses: settings.retryPasses,
               timeoutSeconds: settings.timeoutSeconds,
               maxReadRate: settings.maxReadRate,
+              clusterSectors: settings.clusterSectors ?? null,
+              maxReadErrors: settings.maxReadErrors ?? null,
             }
           : resume.settings
         : settings,
@@ -416,6 +420,18 @@ export function AcquisitionPanel({
                     }
                   />
                 </label>
+                <div className="form-field" data-hint="Controls the maximum sectors per copying request. Smaller requests can help when large reads fail or take too long, and may reduce throughput. It does not limit a blocked kernel call. Applied only after review.">
+                  <span>Read request size · logical sectors</span>
+                  <Select label="Read request size · logical sectors" value={String(settings.clusterSectors ?? "default")} disabled={working || active}
+                    onChange={(value) => setSettings(s => ({...s, clusterSectors: value === "default" ? null : Number(value)}))}
+                    options={[{value:"default",label:"Tool default",detail:"ddrescue's default cluster size"}, ...[1,8,32,128,512,2048].map(n => ({value:String(n),label:`${n} ${n === 1 ? "sector" : "sectors"}`,detail:`${humanBytes(String(n * settings.sectorSize))} · ${n * settings.sectorSize} bytes per copying request`}))]}/>
+                </div>
+                <div className="form-field" data-hint="Stops the attempt after the selected number of read errors is exceeded. This counts read errors, not bad sectors. The image and saved map remain available for review. No automatic restart.">
+                  <span>Stop after read errors exceed</span>
+                  <Select label="Stop after read errors exceed" value={String(settings.maxReadErrors ?? "none")} disabled={working || active}
+                    onChange={(value) => setSettings(s => ({...s, maxReadErrors: value === "none" ? null : Number(value)}))}
+                    options={[{value:"none",label:"No error-count limit"}, ...[1,5,20,100,1000].map(n => ({value:String(n),label:String(n),detail:"Maximum read errors for this attempt"}))]}/>
+                </div>
               </div>
               <label className="check-field">
                 <input
@@ -496,7 +512,7 @@ export function AcquisitionPanel({
             <>
               <div className="job-state" data-state={job.state}>
                 <strong>{job.state}</strong>
-                <span>Exit status: {job.exitCode ?? "not available"}</span>
+                <span>Exit status: {job.exitCode ?? "not available"} · Signal: {job.latestRecord?.terminationSignal ?? "none"}</span>
               </div>
               <code className="artifact-path">{sourceLabel(job.source, platform)}</code>
               <p className="panel-description">{job.message}</p>
@@ -512,7 +528,7 @@ export function AcquisitionPanel({
                   <span>
                     Use the edited read settings on resume
                     <small>
-                      Uses the form's phases, retries, timeout and rate cap.
+                      Uses the form's phases, retries, timeout, request size, error limit and rate cap.
                       Source, destination and range remain fixed; review shows
                       every setting.
                     </small>
@@ -571,6 +587,7 @@ export function AcquisitionPanel({
                         ["*", job.map.nonTrimmedBytes],
                         ["/", job.map.nonScrapedBytes],
                         ["-", job.map.badSectorBytes],
+                        ["unmapped", job.map.unmappedBytes ?? "0"],
                       ] as const
                     )
                       .filter(([, n]) => BigInt(n) > 0n)
@@ -597,6 +614,7 @@ export function AcquisitionPanel({
                         ["Non-trimmed (*)", job.map.nonTrimmedBytes],
                         ["Non-scraped (/)", job.map.nonScrapedBytes],
                         ["Bad-sector (-)", job.map.badSectorBytes],
+                        ["Outside recorded map", job.map.unmappedBytes ?? "0"],
                       ] as const
                     ).map(([label, n]) => (
                       <div key={label}>

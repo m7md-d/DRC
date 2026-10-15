@@ -111,7 +111,7 @@ async fn discover_devices(
 async fn read_smart(
     app: tauri::AppHandle,
     state: tauri::State<'_, Runtime>,
-    request: DeviceRequest,
+    request: SmartRequest,
 ) -> Result<QueryResult, String> {
     require_host()?;
     require_idle(&state)?;
@@ -131,7 +131,13 @@ async fn read_smart(
             .protection_reason
             .unwrap_or("This medium permits discovery metadata only.".into()));
     }
-    let result = platform::backend().smart(&device, &mut |record| emit_record(&app, record))?;
+    if !query::valid_smart_type(request.device_type.as_deref()) {
+        return Err("Unsupported SMART transport. Choose an offered read-information mode.".into());
+    }
+    let result =
+        platform::backend().smart(&device, request.device_type.as_deref(), &mut |record| {
+            emit_record(&app, record)
+        })?;
     emit_record(&app, result.record.clone());
     app.state::<Arc<Store>>().append(
         "smart",
