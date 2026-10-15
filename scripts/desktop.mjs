@@ -17,7 +17,12 @@ const env = buildEnvironment();
 // The isolated Darwin toolchain's rust-objcopy has a broken LLVM runtime path.
 // Keep symbols instead of silently relying on a failed strip operation.
 if (process.platform === "darwin") env.CARGO_PROFILE_RELEASE_STRIP = "none";
-const child = spawn(process.execPath, [cli, ...process.argv.slice(2)], {
+const args = process.argv.slice(2);
+if (process.platform === "darwin") {
+  const separator = args.indexOf("--");
+  args.splice(separator < 0 ? args.length : separator, 0, "--features", "macos-menu-bar");
+}
+const child = spawn(process.execPath, [cli, ...args], {
   stdio: "inherit",
   env,
 });

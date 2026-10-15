@@ -2,9 +2,13 @@
 
 DRC is a native desktop workspace for inspecting storage, acquiring raw images and extracting selected files from images. It opens its own window; a packaged build needs no browser or development server. The English interface follows [m7md-d’s brand system](BRAND-SYSTEM.md), with local fonts, measured statistics and original tool output. Users interpret the readings and choose operations.
 
-## Version 0.4.3
+## Version 0.4.5
 
-This release adds partial-map coverage, explicit read-request/error limits, manual SMART transport choices and stronger destination/log failure handling. See [the researched cases and tested boundaries](docs/SSD-RESILIENCE.md).
+The macOS menu bar monitor uses SwiftUI inside an AppKit NSStatusItem/NSPopover, with Apple system controls, SF Symbols and Swift Charts. System, Disks and Ports share the existing Rust backend. Native disclosure indicators follow each branch’s expanded state and preserve it during sampling and reopening. Click DRC's disk icon in the menu bar for passive CPU/memory/power readings, per-driver disk activity charts, live inventory and an explicitly refreshed connection hierarchy. Open a disk or port map in the main workspace for all fields and original output. Closing the main window keeps the menu bar available; use Quit DRC to exit. Host sampling pauses when the popover is hidden. No login item, temperature estimate, health score or automatic SMART query is added.
+
+While DRC is active, **Monitor → Quick Look** or **⌘⇧M** also opens the panel. Escape and clicking outside dismiss it. RAM uses binary GiB/MiB; storage uses decimal GB/MB. Hover or focus to see exact byte values.
+
+The acquisition protections introduced in 0.4.3 remain: partial-map coverage, explicit read-request/error limits, manual SMART transport choices and destination/log failure handling. See [the researched cases and tested boundaries](docs/SSD-RESILIENCE.md). Published Debian packages remain available from the versioned release links below; the macOS monitor is a platform-specific surface.
 
 - **Easy** workspace: observed device status, exact capacity, reported SMART/temperature, partition proportions, and explicit inspection / imaging / image exploration flows.
 - **Professional** workspace: all original fields, vendor properties, unknown values, detailed settings, operation logs and raw output. The experience toggle preserves the same session and backend protections.
@@ -25,7 +29,7 @@ Read [the full Debian-family installation guide](docs/LINUX-INSTALL.md). Publish
 
 ## Build and run on macOS
 
-Install current Node.js and Rust, and the native tools / Sleuth Kit headers with Homebrew:
+Install Node.js, Rust and Xcode with its macOS SDK and Swift compiler, then install the native tools / Sleuth Kit headers with Homebrew:
 
 ```sh
 brew install ddrescue smartmontools sleuthkit
@@ -40,6 +44,7 @@ Double-click `DRC.app` in the project root, or copy the complete application int
 ```sh
 npm run build
 npm test
+npm run native:test # macOS Swift counter / topology checks
 npm run rust:test
 npm run rust:check
 ```
@@ -56,7 +61,7 @@ Raw command output is kept in the transcript; raw extraction stdout is stored in
 
 ## Implementation notes
 
-Rust provides the native backend, Tauri packages the app and React/TypeScript renders the embedded interface. Frontend code has no general shell or filesystem privileges. The build scripts use a local isolated Rust toolchain when present and otherwise use the standard toolchain.
+Rust provides the backend, Tauri packages the app and React/TypeScript renders the main workspace. The macOS menu bar panel is a SwiftUI/AppKit surface statically linked into the same executable; it has no webview or separate helper application. Linux builds do not compile or link the macOS UI. Frontend code has no general shell or filesystem privileges. The build scripts use a local isolated Rust toolchain when present and otherwise use the standard toolchain.
 
 - [SSD cases and resilience boundaries](docs/SSD-RESILIENCE.md)
 - [Implementation and tested scope](docs/IMPLEMENTATION.md)

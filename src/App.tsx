@@ -43,6 +43,7 @@ import { ByteValue } from "./ByteValue";
 import { Hints } from "./Hints";
 import { PortTree } from "./PortTree";
 import { Select } from "./Select";
+import { listen } from "@tauri-apps/api/event";
 
 const tabs: { key: Tab; label: string; icon: IconName }[] = [
   { key: "device", label: "Device", icon: "drive" },
@@ -466,6 +467,26 @@ export function App() {
   const eventRefresh = useRef<ReturnType<typeof setTimeout> | null>(null);
   const watcherRef = useRef(false);
   const device = snapshot?.devices.find((item) => item.id === selection);
+  const menuNavigate = useRef<(value: {section: string; deviceId: string | null}) => Promise<void>>(async () => {});
+  menuNavigate.current = async ({section, deviceId}) => {
+    if (archivedRef.current) await liveSession();
+    if (deviceId && inventoryRef.current?.devices.some(d => d.id === deviceId)) {
+      selectionRef.current = deviceId;
+      setSelection(deviceId);
+    }
+    if (section === "device") { changeExperience("professional"); setTab("device"); }
+    if (section === "ports") setEasyReading("connection");
+    if (section === "acquisition") setAcquisitionOpen(true);
+  };
+  useEffect(() => {
+    if (!native) return;
+    let stopped = false;
+    let unlisten: (() => void) | undefined;
+    void listen<{section: string; deviceId: string | null}>("menu-bar-navigate", event => {
+      void menuNavigate.current(event.payload).catch(error => setError(errorText(error)));
+    }).then(stop => { if (stopped) stop(); else unlisten = stop; });
+    return () => { stopped = true; unlisten?.(); };
+  }, []);
 
   const updateJob = useCallback((incoming: AcquisitionJob) => {
     const previous = jobsRef.current.find((job) => job.id === incoming.id);
@@ -593,6 +614,15 @@ export function App() {
           setExtractions(extractionRef.current);
         }
         const stop = await subscribe({
+          discovery: (next) => {
+            if (!active || archivedRef.current || (inventoryRef.current?.observedAt ?? 0) > next.observedAt) return;
+            const previous = inventoryRef.current?.devices.find(d => d.id === selectionRef.current);
+            const replacement = next.devices.find(d => d.id === previous?.id && d.identityKey === previous.identityKey);
+            const chosen = previous ? replacement?.id ?? null : inventoryRef.current ? null : (next.devices.find(d => d.internal === false) ?? next.devices[0])?.id ?? null;
+            inventoryRef.current = next; selectionRef.current = chosen;
+            setSnapshot(next); setSelection(chosen);
+          },
+          connection: (report) => { if (active && !archivedRef.current) setConnection(report); },
           command: (record) => {
             if (!active) return;
             if (!archivedRef.current) {
@@ -880,7 +910,7 @@ export function App() {
           <span className="brand-name">DRC</span>
           <span className="brand-divider" />
           <span className="brand-subtitle">Disk Recovery Control</span>
-          <span className="version">0.4.3</span>
+          <span className="version">0.4.5</span>
         </div>
         <div className="header-actions">
           <div className="mode-switch" aria-label="Workspace experience"><button aria-pressed={experience === "easy"} onClick={() => changeExperience("easy")}>Easy</button><button aria-pressed={experience === "professional"} onClick={() => changeExperience("professional")}>Professional</button></div>
@@ -1342,7 +1372,7 @@ export function App() {
           <span className="status-separator">/</span>
           <span>{records.length} commands</span>
           <span className="status-separator">/</span>
-          <span>DRC 0.4.3</span>
+          <span>DRC 0.4.5</span>
         </div>
       </footer>
       {notice && (

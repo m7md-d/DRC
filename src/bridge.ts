@@ -93,6 +93,8 @@ export const bridge = {
 };
 
 export async function subscribe(handlers: {
+  discovery?: (value: Discovery) => void;
+  connection?: (value: QueryResult) => void;
   command: (value: CommandRecord) => void;
   device: (value: DeviceEvent) => void;
   watchError: (value: string) => void;
@@ -104,6 +106,8 @@ export async function subscribe(handlers: {
 }): Promise<UnlistenFn> {
   if (!native) return () => {};
   const unlisten = await Promise.all([
+    listen<Discovery>("live-discovery", (event) => handlers.discovery?.(event.payload)),
+    listen<QueryResult>("live-connection", (event) => handlers.connection?.(event.payload)),
     listen<CommandRecord>("command-record", (event) =>
       handlers.command(event.payload),
     ),

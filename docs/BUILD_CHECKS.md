@@ -1,4 +1,18 @@
-# DRC 0.4.3 verification — 15 October 2026
+# DRC verification — 15 October 2026
+
+## 0.4.5 macOS native menu bar
+
+- SwiftUI renders the panel inside an AppKit NSStatusItem / transient NSPopover, hosted by NSHostingController and statically linked into the same Rust executable. Apple controls, system fonts, SF Symbols and Swift Charts replace the earlier webview panel. There is no second application or menu webview capability.
+- Each native DisclosureGroup binds to its own expanded state. Host sampling and reopening retain branch state; original fields remain available through the workspace. The main window and its session/connection watcher remain alive when hidden. Quit uses the acquisition/extraction stop-and-save guard.
+- Host samples use fixed sysctl keys, Mach CPU/VM counters, IOPowerSources descriptions and published IOBlockStorageDriver counters. No disk descriptor, SMART, self-test, benchmark or sector read is used for sampling. Disk/port refresh remains an explicit metadata action subject to the existing query gate.
+- The menu cache receives live backend observations independently of the historical session in the main window. Readings include timestamps and exact byte strings. Driver-instance changes, reduced counters and hidden intervals leave gaps instead of fabricated throughput.
+- The compact panel is 360×400 logical points, with a shorter height on constrained displays. System cards use 28-point charts and additional counters expand under More readings; disk SMART details are collapsed initially. The content scrolls inside the panel.
+- On the M1 production app, the native accessibility tree exposes a popover, segmented radio buttons and disclosure triangles (no HTML surface for the panel). USB and NVMe/controller branches change between on/off, remove/show children and retain their states after reopening. System/Disks navigation, passive live activity, More readings and tab scroll reset were checked. The 360×400 panel shows the full summary and footer. No SMART or physical-source data read was used.
+- Twenty frontend tests and 39 macOS Rust tests pass. The standalone Swift model suite passes 24 checks covering exact deltas beyond JavaScript precision, missing/reset/reconnected counters, monotonic intervals, memory/byte formatting and hub/enclosure/media topology. Swift compilation rejects warnings; Rust Clippy passes with warnings denied.
+- A local Debian 12 arm64 0.4.5 package built successfully: 20 frontend / 39 Rust tests, Clippy with warnings denied and all 12 generated-file fault/resume cases passed. The package and checksum are in `artifacts/linux-0.4.5`; this is local evidence, not a published release or amd64 validation.
+- The `macos-menu-bar` Cargo feature is enabled by macOS build/test wrappers only. Linux packaging does not invoke Swift or link AppKit/SwiftUI/Charts. Published 0.4.3 Linux CI evidence below remains version-specific; local package checks do not imply physical hardware validation.
+
+## 0.4.3 acquisition baseline
 
 ## Native packages
 
