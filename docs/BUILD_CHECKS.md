@@ -1,5 +1,17 @@
 # DRC verification — 15 October 2026
 
+## 0.4.6 unified connections and continuous host telemetry
+
+- Query results serialize a derived hardware tree from original fields, including legacy saved reports. Both native and main interfaces consume the same tree. Raw reports and bytes remain intact; derived trees imported from older versions are recomputed.
+- A single USB-C connector contains USB high/super-speed path readings and a uniquely numbered host Thunderbolt receptacle. USB entry IDs and unique location IDs correlate observations; conflicting available vendor/product/serial values reject the join. Similar names are not identities. Unconfirmed physical relationships remain unconfirmed.
+- Friendly connector/hub/storage labels retain each source’s raw name, properties and association evidence in Details. Linux interface entries enrich their reported parent device. Windows remains outside the supported adapters.
+- Host sampling runs independently of popover visibility. Reopening preserves samples, their delta baseline and expansion state. Actual gaps or reset counters stay discontinuous. A dedicated Swift state suite exercises hidden samples, reopening, retained IDs/baselines and real missing intervals.
+- CPU frequency uses optional IOReport state-residency deltas and read-only DVFS tables on known M1–M3 layouts, not a static clock. The header reports the mean of available active E/P channel frequencies over the last interval. CPU temperature is the arithmetic mean of available eACC/pACC thermal-zone sensors read through IOHID. Original per-channel states and sensor names are retained. Both were read successfully on the owner’s M1 without root; other hardware/OS versions are not physically validated.
+- API research and adapted ABI definitions reference [macmon v0.7.2](https://github.com/vladkens/macmon/tree/v0.7.2/src), MIT. Its notice ships with the app. No service, sensor-writing API or administrator helper is installed.
+
+- Validation: 20 frontend tests, 48 macOS Rust tests, 24 Swift model checks and 8 native continuity checks pass. Rust Clippy and Swift warnings-as-errors pass. The Debian arm64 build passes 46 Rust tests and all 12 generated-file fault/resume cases.
+- Production M1 UI checks show one USB-C connector per reported number with original USB/Thunderbolt names in Details, live E/P clocks and CPU temperature in the header, and uninterrupted samples after reopening. The chart uses an explicit recent-time domain so old uptime cannot compress all lines into the right edge. No physical-source scan or SMART read was performed.
+
 ## 0.4.5 macOS native menu bar
 
 - SwiftUI renders the panel inside an AppKit NSStatusItem / transient NSPopover, hosted by NSHostingController and statically linked into the same Rust executable. Apple controls, system fonts, SF Symbols and Swift Charts replace the earlier webview panel. There is no second application or menu webview capability.

@@ -3798,3 +3798,6 @@ code {
   color: var(--muted);
   font-size: 10px;
 }
+
+.port-evidence { display: grid; gap: 10px; margin-bottom: 18px; }
+.port-evidence p { margin: 0; font-size: 12px; overflow-wrap: anywhere; }

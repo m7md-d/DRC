@@ -8,6 +8,7 @@ export interface PortNode {
   fields: Json;
   children: PortNode[];
   diskIds: string[];
+  observations?: {source: string; rawName: string; relation: string; fields: Json}[];
 }
 const text = (v: Json | undefined) =>
   typeof v === "string" ? v.trim() : undefined;
@@ -286,7 +287,7 @@ export function portMeasurements(node: PortNode) {
       label,
       key,
       value: key
-        ? ["bus_power", "bus_power_used"].includes(key) &&
+        ? ["bus_power", "bus_power_used", "bus_power_available", "kUSBWakePortCurrentLimit", "kUSBSleepPortCurrentLimit"].includes(key) &&
           /^\d+$/.test(displayValue(reported(key)))
           ? `${displayValue(reported(key))} mA`
           : key === "device_speed"

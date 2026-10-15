@@ -910,7 +910,7 @@ export function App() {
           <span className="brand-name">DRC</span>
           <span className="brand-divider" />
           <span className="brand-subtitle">Disk Recovery Control</span>
-          <span className="version">0.4.5</span>
+          <span className="version">0.4.6</span>
         </div>
         <div className="header-actions">
           <div className="mode-switch" aria-label="Workspace experience"><button aria-pressed={experience === "easy"} onClick={() => changeExperience("easy")}>Easy</button><button aria-pressed={experience === "professional"} onClick={() => changeExperience("professional")}>Professional</button></div>
@@ -1372,7 +1372,7 @@ export function App() {
           <span className="status-separator">/</span>
           <span>{records.length} commands</span>
           <span className="status-separator">/</span>
-          <span>DRC 0.4.5</span>
+          <span>DRC 0.4.6</span>
         </div>
       </footer>
       {notice && (

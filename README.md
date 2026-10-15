@@ -2,9 +2,11 @@
 
 DRC is a native desktop workspace for inspecting storage, acquiring raw images and extracting selected files from images. It opens its own window; a packaged build needs no browser or development server. The English interface follows [m7md-d’s brand system](BRAND-SYSTEM.md), with local fonts, measured statistics and original tool output. Users interpret the readings and choose operations.
 
-## Version 0.4.5
+## Version 0.4.6
 
-The macOS menu bar monitor uses SwiftUI inside an AppKit NSStatusItem/NSPopover, with Apple system controls, SF Symbols and Swift Charts. System, Disks and Ports share the existing Rust backend. Native disclosure indicators follow each branch’s expanded state and preserve it during sampling and reopening. Click DRC's disk icon in the menu bar for passive CPU/memory/power readings, per-driver disk activity charts, live inventory and an explicitly refreshed connection hierarchy. Open a disk or port map in the main workspace for all fields and original output. Closing the main window keeps the menu bar available; use Quit DRC to exit. Host sampling pauses when the popover is hidden. No login item, temperature estimate, health score or automatic SMART query is added.
+The macOS menu bar panel uses SwiftUI/AppKit system controls and Swift Charts. Host sampling continues while the panel is closed; reopening preserves the rolling history and counter baseline. Genuine missing intervals, sleep and counter resets remain gaps. The CPU header includes live E/P active-residency frequencies and the mean of available CPU thermal-zone sensors, with original channels/sensors in More readings. These optional private macOS telemetry APIs were verified on M1; unavailable values stay unavailable.
+
+Ports now use one connection tree shared by the Rust backend, main workspace and native panel. Explicit host connector numbers join USB paths and uniquely numbered Thunderbolt receptacles. Registry entry IDs and unique USB locations correlate device observations, with vendor/product and available serial checks. A connector appears once; original names, individual source readings and all original reports remain in Details. Names or model similarity never determine a hardware association.
 
 While DRC is active, **Monitor → Quick Look** or **⌘⇧M** also opens the panel. Escape and clicking outside dismiss it. RAM uses binary GiB/MiB; storage uses decimal GB/MB. Hover or focus to see exact byte values.
 
@@ -21,7 +23,7 @@ The acquisition protections introduced in 0.4.3 remain: partial-map coverage, ex
 
 Windows is a future platform adapter. Its reference is not presented as available. Filesystems are independent of the host: Windows disk formats such as NTFS, FAT and exFAT remain targets of the image reader. The existing generated-data validation covers FAT16, MBR, deleted/Unicode entries and fragmented binary extraction; NTFS and exFAT need further corpus validation.
 
-The interface includes an adaptive Easy workspace, hover/focus explanations and readable decimal capacity values with exact bytes on hover or focus. **Port map** shows host-reported USB/hub/enclosure relationships, USB registry and host-port power/statistics properties on macOS and canonical sysfs ancestry on Linux. An enumerated enclosure and a declared current budget do not establish electrical power reaching its SSD or readable sectors. Original properties and command bytes remain available.
+The interface includes an adaptive Easy workspace, hover/focus explanations and readable decimal capacity values with exact bytes on hover or focus. **Port map** shows USB/hub/enclosure relationships, per-source power/statistics properties on macOS and canonical sysfs ancestry on Linux. USB interface observations enrich a device rather than appearing as extra Linux hardware. An enumerated enclosure and a declared current budget do not establish electrical power reaching its SSD or readable sectors. Original properties and command bytes remain available.
 
 ## Install Linux
 

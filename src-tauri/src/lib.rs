@@ -12,6 +12,7 @@ mod policy;
 mod query;
 mod rates;
 mod store;
+mod topology;
 
 use acquisition::{Job, Manager as AcquisitionManager, Plan, Settings, Source};
 use model::*;
