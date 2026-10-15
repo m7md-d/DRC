@@ -90,12 +90,26 @@ pub struct ToolReport {
     pub purpose: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QueryResult {
     pub record: CommandRecord,
     pub fields: Option<Value>,
     pub parse_error: Option<String>,
+}
+impl Serialize for QueryResult {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let topology = crate::topology::connection_nodes(self.fields.as_ref());
+        let mut map = serializer.serialize_map(Some(if topology.is_some() { 4 } else { 3 }))?;
+        map.serialize_entry("record", &self.record)?;
+        map.serialize_entry("fields", &self.fields)?;
+        map.serialize_entry("parseError", &self.parse_error)?;
+        if let Some(nodes) = topology {
+            map.serialize_entry("topology", &nodes)?;
+        }
+        map.end()
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -1,7 +1,7 @@
 import Foundation
 
 // Device measurements arrive as decimal strings. Never decode byte counters through Double.
-indirect enum JSONValue: Decodable {
+indirect enum JSONValue: Codable {
   case object([String: JSONValue])
   case array([JSONValue])
   case string(String)
@@ -23,6 +23,23 @@ indirect enum JSONValue: Decodable {
     } else {
       self = .number(try c.decode(Decimal.self))
     }
+  }
+  func encode(to encoder: Encoder) throws {
+    var c = encoder.singleValueContainer()
+    switch self {
+    case .object(let x): try c.encode(x)
+    case .array(let x): try c.encode(x)
+    case .string(let x): try c.encode(x)
+    case .number(let x): try c.encode(x)
+    case .bool(let x): try c.encode(x)
+    case .null: try c.encodeNil()
+    }
+  }
+  var formatted: String {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+    return (try? encoder.encode(self)).flatMap { String(data: $0, encoding: .utf8) }
+      ?? "Unavailable"
   }
   subscript(_ key: String) -> JSONValue {
     if case .object(let v) = self { return v[key] ?? .null }
@@ -80,6 +97,7 @@ struct Query: Decodable {
   let fields: JSONValue?
   let record: Record
   let parseError: String?
+  let topology: [PortNode]?
 }
 struct Snapshot: Decodable {
   let discovery: Discovery?, connection: Query?, invalidatedAt: UInt64?, activity: String?
@@ -93,10 +111,34 @@ struct DiskCounter: Decodable {
   let deviceId: String, registryId: String
   let statistics: [String: JSONValue]
 }
+struct CPUFrequency: Decodable {
+  let channel: String, cluster: String
+  let mhz: Double
+  let intervalMs: String
+}
+struct CPUSensor: Decodable {
+  let name: String, source: String
+  let celsius: Double
+}
+struct CPUTelemetry: Decodable {
+  let temperatureCelsius: Double?, temperatureSensors: [CPUSensor], frequencies: [CPUFrequency]
+  let frequencyScope: String, temperatureScope: String
+  func mhz(_ cluster: String) -> Double? {
+    let values = frequencies.filter { $0.cluster == cluster }.map { $0.mhz }
+    return values.isEmpty ? nil : values.reduce(0, +) / Double(values.count)
+  }
+  var frequencyLabel: String {
+    let e = mhz("Efficiency").map { String(format: "E %.2f", $0 / 1000) }
+    let p = mhz("Performance").map { String(format: "P %.2f", $0 / 1000) }
+    let labels = [e, p].compactMap { $0 }
+    return labels.isEmpty ? "— GHz" : labels.joined(separator: " · ") + " GHz"
+  }
+}
 struct Host: Decodable {
   let observedAt: UInt64, monotonicMs: String
   let model: String?, chip: String?, osVersion: String?, logicalCores: Int?, memoryBytes: String?,
     memory: Memory?
+  let cpuTelemetry: CPUTelemetry?
   let cpuTicks: [String]?, loadAverage: [Double]?, uptimeSeconds: String?
   let powerSources: [JSONValue], diskCounters: [DiskCounter]
   let source: String
@@ -205,10 +247,19 @@ func uptimeLabel(_ value: String?) -> String {
   return "\(seconds/86400)d \(seconds/3600%24)h"
 }
 
-struct PortNode: Identifiable {
+struct PortObservation: Decodable {
+  let source: String, rawName: String, relation: String, fields: JSONValue
+}
+struct PortNode: Decodable, Identifiable {
   let id: String, label: String, kind: String, source: String, fields: JSONValue,
     children: [PortNode], diskIDs: [String]
-  var readings: [(String, String, String)] {
+  let observations: [PortObservation]
+  enum CodingKeys: String, CodingKey {
+    case id, label, kind, source, fields, children, observations
+    case diskIDs = "diskIds"
+  }
+  var readings: [(String, String, String)] { readings(for: fields) }
+  func readings(for fields: JSONValue) -> [(String, String, String)] {
     let speedNames = [
       "low_speed": "Up to 1.5 Mb/s", "full_speed": "Up to 12 Mb/s", "high_speed": "Up to 480 Mb/s",
       "super_speed": "Up to 5 Gb/s", "super_speed_plus": "Up to 10 Gb/s",
@@ -247,7 +298,10 @@ struct PortNode: Identifiable {
         let value: String
         if key == "device_speed" {
           value = speedNames[text] ?? text
-        } else if ["bus_power", "bus_power_used"].contains(key), UInt64(text) != nil {
+        } else if [
+          "bus_power", "bus_power_used", "bus_power_available", "kUSBWakePortCurrentLimit",
+          "kUSBSleepPortCurrentLimit",
+        ].contains(key), UInt64(text) != nil {
           value = text + " mA"
         } else {
           value = text
@@ -256,102 +310,5 @@ struct PortNode: Identifiable {
       }
       return nil
     }
-  }
-}
-private func reportedIDs(_ fields: JSONValue) -> [String] {
-  Array(
-    Set(
-      ["bsd_name", "BSD Name", "DeviceIdentifier"].compactMap { fields[$0].text }.filter {
-        !$0.isEmpty
-      })
-  ).sorted()
-}
-private func profiler(
-  _ nodes: [JSONValue], path: String, kind: String = "Reported device", source: String,
-  depth: Int = 0
-) -> [PortNode] {
-  guard depth < 64 else { return [] }
-  return nodes.enumerated().map { index, fields in
-    let id = "\(path)/\(index)"
-    var children = profiler(
-      fields["_items"].objects, path: id + "/items", source: source, depth: depth + 1)
-    children += profiler(
-      fields["Media"].objects, path: id + "/media", kind: "Reported media", source: source,
-      depth: depth + 1)
-    children += profiler(
-      fields["volumes"].objects, path: id + "/volumes", kind: "Reported volume", source: source,
-      depth: depth + 1)
-    for key in fields.entries.keys.sorted()
-    where key.hasPrefix("receptacle_") && key.hasSuffix("_tag") {
-      let port = fields[key]
-      if !port.entries.isEmpty {
-        children.append(
-          PortNode(
-            id: id + "/" + key, label: "Port " + (port["receptacle_id_key"].text ?? key),
-            kind: "Reported port", source: source, fields: port, children: [],
-            diskIDs: reportedIDs(port)))
-      }
-    }
-    return PortNode(
-      id: id, label: fields["_name"].text ?? fields["device_name_key"].text ?? kind, kind: kind,
-      source: source, fields: fields, children: children, diskIDs: reportedIDs(fields))
-  }
-}
-private func registry(_ nodes: [JSONValue], path: String, source: String, depth: Int = 0)
-  -> [PortNode]
-{
-  guard depth < 64 else { return [] }
-  return nodes.enumerated().map { index, fields in
-    let id = "\(path)/\(index)"
-    return PortNode(
-      id: id,
-      label: fields["USB Product Name"].text ?? fields["IORegistryEntryName"].text
-        ?? "Registry entry", kind: fields["IOObjectClass"].text ?? "Registry entry", source: source,
-      fields: fields,
-      children: registry(
-        fields["IORegistryEntryChildren"].objects, path: id, source: source, depth: depth + 1),
-      diskIDs: reportedIDs(fields))
-  }
-}
-func portTree(_ fields: JSONValue?) -> [PortNode] {
-  guard let fields else { return [] }
-  let definitions: [(String, String, String, [PortNode])] = [
-    (
-      "usb", "USB devices", "System Profiler",
-      profiler(
-        fields["SPUSBDataType"].objects, path: "usb", kind: "Reported bus",
-        source: "System Profiler · USB")
-    ),
-    (
-      "thunderbolt", "Thunderbolt / USB4", "System Profiler",
-      profiler(
-        fields["SPThunderboltDataType"].objects, path: "thunderbolt", kind: "Reported bus",
-        source: "System Profiler · Thunderbolt")
-    ),
-    (
-      "nvme", "NVMe storage", "System Profiler",
-      profiler(
-        fields["SPNVMeDataType"].objects, path: "nvme", kind: "Reported controller / media",
-        source: "System Profiler · NVMe")
-    ),
-    (
-      "registry", "USB registry", "IORegistry",
-      registry(
-        fields["IORegistryUSBReport"]["fields"].objects, path: "registry",
-        source: "IORegistry · IOUSB plane")
-    ),
-    (
-      "usb-ports", "USB host ports", "IORegistry",
-      registry(
-        fields["IORegistryPortReport"]["fields"].objects, path: "usb-ports",
-        source: "IORegistry · AppleUSBHostPort")
-    ),
-  ]
-  return definitions.compactMap { id, label, source, children in
-    children.isEmpty
-      ? nil
-      : PortNode(
-        id: id, label: label, kind: "Report", source: source, fields: .null, children: children,
-        diskIDs: [])
   }
 }

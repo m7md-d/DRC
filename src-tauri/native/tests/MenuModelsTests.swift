@@ -65,24 +65,31 @@ import Foundation
     check(rateLabel(nil) == "Not sampled", "Unavailable rate is explicit")
     check(rateLabel(0) == "0 B/s", "An observed idle rate is zero")
     let json = Data(
-      #"{"SPUSBDataType":[{"_name":"Bus","_items":[{"_name":"Enclosure","bus_power_used":100,"device_speed":"super_speed","Media":[{"_name":"SSD","bsd_name":"disk8"}]}]}],"IORegistryUSBReport":{"fields":[{"IORegistryEntryName":"Root","IORegistryEntryChildren":[{"USB Product Name":"Unresponsive enclosure","bMaxPower":250}]}]}}"#
+      #"{"id":"usb-c:1","label":"USB-C port 1","kind":"Host connector","source":"macOS host port number","fields":null,"diskIds":[],"observations":[{"source":"IORegistry","rawName":"usb-drd0-port-ss","relation":"UsbCPortNumber","fields":{"future":"18446744073709551615","bus_power_used":"100","device_speed":"super_speed"}}],"children":[]}"#
         .utf8)
-    let fields = try JSONDecoder().decode(JSONValue.self, from: json)
-    let tree = portTree(fields)
-    check(tree.count == 2, "Only reported buses appear")
-    let enclosure = tree[0].children[0].children[0]
+    let connector = try JSONDecoder().decode(PortNode.self, from: json)
+    check(connector.label == "USB-C port 1", "Native names come from the shared hardware tree")
     check(
-      enclosure.children.first?.diskIDs == ["disk8"], "Media mapping comes from an explicit BSD id")
-    check(enclosure.diskIDs.isEmpty, "Enclosures do not acquire a guessed media identity")
+      connector.observations[0].rawName == "usb-drd0-port-ss",
+      "Raw names remain available in details")
     check(
-      enclosure.readings.contains { $0.0 == "Power requested" && $0.1 == "100 mA" },
-      "USB current request has its reported unit")
+      connector.observations[0].fields["future"].text == String(UInt64.max),
+      "Source evidence keeps exact unknown fields")
     check(
-      enclosure.readings.contains { $0.0 == "Link / speed" && $0.1 == "Up to 5 Gb/s" },
-      "Descriptor speed is distinct from throughput")
+      connector.readings(for: connector.observations[0].fields).contains {
+        $0.0 == "Power requested" && $0.1 == "100 mA"
+      }, "Power readings keep their units")
     check(
-      tree[1].children[0].children[0].children.isEmpty,
-      "An enclosure without a disk stays visible without invented media")
+      connector.diskIDs.isEmpty && connector.children.isEmpty,
+      "An empty connector never invents readable media")
+    let telemetry = try JSONDecoder().decode(
+      CPUTelemetry.self,
+      from: Data(
+        #"{"temperatureCelsius":52.5,"temperatureSensors":[],"frequencies":[{"channel":"ECPU0","cluster":"Efficiency","mhz":1000,"intervalMs":"2500"},{"channel":"PCPU0","cluster":"Performance","mhz":2400,"intervalMs":"2500"}],"frequencyScope":"Active residency","temperatureScope":"CPU thermal zones"}"#
+          .utf8))
+    check(
+      telemetry.frequencyLabel == "E 1.00 · P 2.40 GHz",
+      "Frequency header identifies both CPU tiers")
     let exact = try JSONDecoder().decode(JSONValue.self, from: Data("18446744073709551615".utf8))
     check(exact.text == String(UInt64.max), "Original JSON numbers retain exact integer precision")
     print("Native menu models: \(checks) checks passed")

@@ -5,23 +5,34 @@ import { FieldTable } from "./FieldTable";
 import { PortStatistics } from "./PortStatistics";
 import { ByteValue } from "./ByteValue";
 import { Icon } from "./Icon";
+import { Select } from "./Select";
 import type { QueryResult } from "./types";
 function flattened(nodes: PortNode[]): PortNode[] {
   return nodes.flatMap((n) => [n, ...flattened(n.children)]);
 }
 export function PortTree({ report }: { report: QueryResult }) {
-  const roots = useMemo(() => portTopology(report.fields), [report]);
+  const roots = useMemo(
+    () => report.topology ?? portTopology(report.fields),
+    [report],
+  );
   const all = useMemo(() => flattened(roots), [roots]);
   const [selected, setSelected] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [evidenceIndex, setEvidenceIndex] = useState(0);
   const node =
     all.find((n) => n.id === selected) ??
-    all.find((n) => n.fields !== null) ??
+    all.find((n) => !!n.observations?.length || n.fields !== null) ??
     roots[0];
   const reportedStorage = node
     ? flattened([node]).flatMap((n) => n.diskIds)
     : [];
   const storageIds = [...new Set(reportedStorage)];
+  const observations = node?.observations ?? [];
+  const observation = observations[evidenceIndex] ?? observations[0];
+  const inspected =
+    node && observation
+      ? { ...node, fields: observation.fields, source: observation.source }
+      : node;
   function draw(nodes: PortNode[]) {
     return (
       <ul>
@@ -59,7 +70,10 @@ export function PortTree({ report }: { report: QueryResult }) {
                 </button>
                 <button
                   className="port-select"
-                  onClick={() => setSelected(n.id)}
+                  onClick={() => {
+                    setSelected(n.id);
+                    setEvidenceIndex(0);
+                  }}
                   aria-pressed={node?.id === n.id}
                   data-hint={`Inspect ${n.label}. This node and its parent relationship come from ${n.source}.`}
                 >
@@ -97,7 +111,7 @@ export function PortTree({ report }: { report: QueryResult }) {
             Ports & enclosures
           </h3>
           <p>
-            {all.length} reported nodes ·{" "}
+            {all.length} connection entries ·{" "}
             {new Date(report.record.startedAt).toLocaleDateString("en-GB")}{" "}
             {timestamp(report.record.startedAt)} · snapshot
           </p>
@@ -120,32 +134,70 @@ export function PortTree({ report }: { report: QueryResult }) {
               <p className="source-label">
                 {node.kind} · {node.source}
               </p>
+              {observations.length > 0 && (
+                <div className="port-evidence">
+                  <Select
+                    label="Reading source"
+                    value={String(
+                      Math.min(evidenceIndex, observations.length - 1),
+                    )}
+                    onChange={(v) => setEvidenceIndex(Number(v))}
+                    options={observations.map((o, i) => ({
+                      value: String(i),
+                      label: o.source,
+                      detail: o.rawName,
+                    }))}
+                  />
+                  <p>
+                    <strong>Original name:</strong>{" "}
+                    <code>{observation?.rawName}</code>
+                  </p>
+                  <p className="source-label">{observation?.relation}</p>
+                </div>
+              )}
               <div className="port-readings">
-                {(getField(node.fields, "sizeBytes") ??
-                  getField(node.fields, "size")) !== undefined && (
+                {(getField(inspected?.fields ?? node.fields, "sizeBytes") ??
+                  getField(inspected?.fields ?? node.fields, "size_in_bytes") ??
+                  getField(inspected?.fields ?? node.fields, "size")) !==
+                  undefined && (
                   <article>
                     <span>Reported capacity</span>
                     <strong>
                       <ByteValue
                         value={
-                          getField(node.fields, "sizeBytes") ??
-                          getField(node.fields, "size")
+                          getField(
+                            inspected?.fields ?? node.fields,
+                            "sizeBytes",
+                          ) ??
+                          getField(
+                            inspected?.fields ?? node.fields,
+                            "size_in_bytes",
+                          ) ??
+                          getField(inspected?.fields ?? node.fields, "size")
                         }
                       />
                     </strong>
                   </article>
                 )}
-                {getField(node.fields, "link-error-count") !== undefined && (
+                {getField(
+                  inspected?.fields ?? node.fields,
+                  "link-error-count",
+                ) !== undefined && (
                   <article data-hint="The original host-port link-error counter. This does not assign the error to the SSD or establish its cause.">
                     <span>Reported link errors</span>
                     <strong>
-                      {displayValue(getField(node.fields, "link-error-count"))}
+                      {displayValue(
+                        getField(
+                          inspected?.fields ?? node.fields,
+                          "link-error-count",
+                        ),
+                      )}
                     </strong>
                     <code>link-error-count</code>
                   </article>
                 )}
 
-                {portMeasurements(node).map((m) => (
+                {portMeasurements(inspected ?? node).map((m) => (
                   <article key={m.label} data-hint={m.hint}>
                     <span>{m.label}</span>
                     <strong>{m.value}</strong>
@@ -166,7 +218,7 @@ export function PortTree({ report }: { report: QueryResult }) {
                   </strong>
                 </article>
               </div>
-              <PortStatistics fields={node.fields} />
+              <PortStatistics fields={inspected?.fields ?? node.fields} />
               <div className="inline-note">
                 <Icon name="info" />
                 <span>
@@ -176,12 +228,12 @@ export function PortTree({ report }: { report: QueryResult }) {
                   Child media appear only when the host reports them.
                 </span>
               </div>
-              {node.fields !== null && (
+              {inspected?.fields !== null && (
                 <details className="port-properties">
                   <summary>All properties of this node</summary>
                   <FieldTable
-                    value={node.fields}
-                    source={node.source}
+                    value={inspected?.fields ?? null}
+                    source={inspected?.source ?? node.source}
                     title="Original node properties"
                   />
                 </details>

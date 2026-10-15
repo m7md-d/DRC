@@ -10,6 +10,8 @@ use tauri::{
     menu::{Menu, MenuItem, Submenu},
     Manager,
 };
+#[path = "cpu_sensors.rs"]
+mod cpu_sensors;
 
 type Cf = *const c_void;
 #[link(name = "CoreFoundation", kind = "framework")]
@@ -289,6 +291,7 @@ pub fn host() -> Value {
         "cpuTicks":cpu_ok.then(||cpu.cpu_ticks.map(|v|v.to_string())),"loadAverage":load,
         "uptimeSeconds":boot.and_then(|v| (v.tv_sec >= 0).then(|| (now_ms()/1000).saturating_sub(v.tv_sec as u64).to_string())),
         "powerSources":power_sources(),"diskCounters":disk_counters(),
+        "cpuTelemetry":cpu_sensors::sample(),
         "source":"macOS sysctl · Mach host statistics · IOKit published registry counters · IOPowerSources"
     })
 }
@@ -355,15 +358,13 @@ extern "C" fn native_action(action: i32, pointer: *const c_char) {
             tauri::async_runtime::spawn_blocking(move || publish_snapshot(&app));
         }
         2 => {
-            if !visible() || SAMPLING.swap(true, std::sync::atomic::Ordering::AcqRel) {
+            if SAMPLING.swap(true, std::sync::atomic::Ordering::AcqRel) {
                 return;
             }
             tauri::async_runtime::spawn_blocking(move || {
                 let sample = host();
-                if visible() {
-                    let activity = super::current_activity(&app);
-                    send(json!({"kind":"host","value":sample,"activity":activity}));
-                }
+                let activity = super::current_activity(&app);
+                send(json!({"kind":"host","value":sample,"activity":activity}));
                 SAMPLING.store(false, std::sync::atomic::Ordering::Release);
             });
         }

@@ -16,20 +16,15 @@ public typealias DRCMenuCallback = @convention(c) (Int32, UnsafePointer<CChar>?)
   @Published var expanded: Set<String> = []
   @Published var hostRaw = ""
   @Published var panelHeight: CGFloat = 400
-  private var knownNodes: Set<String> = []
   private var previous: Host?
   private var segment = 0
   var hostInFlight = false
   var action: ((Int32, String?) -> Void)?
   var disk: Disk? { snapshot?.discovery?.devices.first { $0.id == selectedID } }
-  var ports: [PortNode] { portTree(snapshot?.connection?.fields) }
+  var ports: [PortNode] { snapshot?.connection?.topology ?? [] }
   var queryDisabled: Bool { busy != nil || activity != nil }
   func begin() {
-    previous = nil
-    segment += 1
-    hostInFlight = false
     action?(1, nil)
-    sample()
   }
   func sample() {
     if !hostInFlight {
@@ -78,13 +73,8 @@ public typealias DRCMenuCallback = @convention(c) (Int32, UnsafePointer<CChar>?)
             (next.discovery?.devices.first { $0.internal == false } ?? next.discovery?.devices.first)?
             .id ?? ""
         }
-        for root in portTree(next.connection?.fields) where !knownNodes.contains(root.id) {
-          if root.id == "usb" { expanded.insert(root.id) }
-          knownNodes.insert(root.id)
-        }
       case "host":
         hostInFlight = false
-        guard visible else { return }
         let next = try decoder.decode(HostMessage.self, from: data)
         // Every absent/reset counter starts a separate chart series: no bridge across a gap.
         if let previous, let a = UInt64(previous.monotonicMs),
@@ -165,6 +155,8 @@ private struct SampleChart: View {
   }
   var body: some View {
     let points = plotted
+    let end = samples.last?.seconds ?? 0
+    let start = max(samples.first?.seconds ?? end, end - 120)
     if points.count < 2 {
       Text("Waiting for current samples").font(.caption).foregroundStyle(.secondary).frame(
         maxWidth: .infinity, minHeight: 28, alignment: .leading)
@@ -180,8 +172,11 @@ private struct SampleChart: View {
       .chartXAxis(.hidden).chartYAxis(.hidden).chartYScale(
         domain: 0...(percent ? 100 : max(1, points.map(\.value).max() ?? 1))
       )
+      .chartXScale(domain: start...max(start + 1, end))
+      .chartPlotStyle { $0.clipped() }
       .frame(height: 28).accessibilityLabel(label).help(
-        "\(label). Recent visible samples only; missing or reset counters are gaps.")
+        "\(label). Continuous recent samples, including while this panel is closed. Actual missing or reset counters remain gaps."
+      )
     }
   }
   private struct ChartPoint: Identifiable {
@@ -197,6 +192,18 @@ private struct SystemSection: View {
           HStack {
             Label("CPU", systemImage: "cpu").font(.headline)
             Spacer()
+            Text(model.host?.cpuTelemetry?.frequencyLabel ?? "— GHz").font(.caption2)
+              .monospacedDigit()
+              .help(
+                model.host?.cpuTelemetry?.frequencyScope
+                  ?? "Current frequency is unavailable. A static maximum clock is not substituted.")
+            Text(
+              model.host?.cpuTelemetry?.temperatureCelsius.map { String(format: "%.0f °C", $0) }
+                ?? "— °C"
+            ).font(.caption).monospacedDigit()
+              .help(
+                model.host?.cpuTelemetry?.temperatureScope
+                  ?? "CPU temperature sensors are unavailable.")
             Text(model.samples.last?.cpu.map { String(format: "%.1f%%", $0) } ?? "Sampling…")
               .monospacedDigit().font(.headline)
           }.help(
@@ -259,8 +266,16 @@ private struct SystemSection: View {
             label: "Compressed", value: byteLabel(model.host?.memory?.compressedBytes, memory: true)
           )
           Reading(label: "Uptime", value: uptimeLabel(model.host?.uptimeSeconds))
-          Text("CPU / GPU temperatures are not exposed by this monitor.").font(.caption)
-            .foregroundStyle(.secondary)
+          ForEach(model.host?.cpuTelemetry?.temperatureSensors ?? [], id: \.name) { sensor in
+            Reading(
+              label: sensor.name, value: String(format: "%.1f °C", sensor.celsius),
+              hint: sensor.source)
+          }
+          ForEach(model.host?.cpuTelemetry?.frequencies ?? [], id: \.channel) { frequency in
+            Reading(
+              label: frequency.channel, value: String(format: "%.0f MHz", frequency.mhz),
+              hint: "Active-residency weighted frequency over \(frequency.intervalMs) ms")
+          }
           DisclosureGroup("Original host sample", isExpanded: model.binding("host-raw")) {
             ScrollView {
               Text(model.hostRaw).font(.system(.caption2, design: .monospaced)).textSelection(
@@ -426,19 +441,38 @@ private struct PortBranch: View {
   var body: some View {
     DisclosureGroup(isExpanded: model.binding(node.id)) {
       VStack(alignment: .leading, spacing: 9) {
-        if node.kind != "Report" {
-          ForEach(Array(node.readings.enumerated()), id: \.offset) { _, r in
-            Reading(label: r.0, value: r.1, hint: r.2)
-          }
-          if node.readings.isEmpty {
-            Text("No link or power values reported at this node.").font(.caption).foregroundStyle(
-              .secondary)
-          }
-          if !node.diskIDs.isEmpty {
-            Reading(label: "Reported media", value: node.diskIDs.joined(separator: ", "))
-          }
+        if !node.diskIDs.isEmpty {
+          Reading(label: "Reported media", value: node.diskIDs.joined(separator: ", "))
         }
         ForEach(node.children) { child in PortBranch(node: child, model: model) }
+        DisclosureGroup(
+          "Details · \(node.observations.count) readings",
+          isExpanded: model.binding(node.id + "/details")
+        ) {
+          ForEach(Array(node.observations.enumerated()), id: \.offset) { index, observation in
+            VStack(alignment: .leading, spacing: 6) {
+              Text(observation.source).font(.caption.weight(.semibold))
+              Reading(label: "Original name", value: observation.rawName)
+              Text(observation.relation).font(.caption2).foregroundStyle(.secondary)
+              ForEach(Array(node.readings(for: observation.fields).enumerated()), id: \.offset) {
+                _, r in Reading(label: r.0, value: r.1, hint: r.2)
+              }
+              DisclosureGroup(
+                "All original properties",
+                isExpanded: model.binding(node.id + "/raw/" + String(index))
+              ) {
+                ScrollView([.horizontal, .vertical]) {
+                  Text(observation.fields.formatted).font(.system(.caption2, design: .monospaced))
+                    .textSelection(.enabled)
+                }.frame(height: 110)
+                Button("Copy properties") {
+                  NSPasteboard.general.clearContents()
+                  NSPasteboard.general.setString(observation.fields.formatted, forType: .string)
+                }
+              }
+            }.padding(.vertical, 4)
+          }
+        }.font(.caption)
       }.padding(.vertical, 6)
     } label: {
       HStack(alignment: .top, spacing: 8) {
@@ -454,7 +488,7 @@ private struct PortBranch: View {
       }
     }
     .help(
-      "Expand or collapse \(node.label). The disclosure indicator follows this node's actual expanded state."
+      "Expand or collapse \(node.label). Original names and source properties are available in Details."
     )
     .accessibilityIdentifier("port-\(node.id)")
   }
@@ -489,6 +523,18 @@ private struct PortsSection: View {
       if let error = model.snapshot?.connection?.parseError {
         Text(error).font(.caption).foregroundStyle(.secondary)
       }
+      DisclosureGroup("Original reports", isExpanded: model.binding("ports-original")) {
+        if let fields = model.snapshot?.connection?.fields {
+          ScrollView([.horizontal, .vertical]) {
+            Text(fields.formatted).font(.system(.caption2, design: .monospaced)).textSelection(
+              .enabled)
+          }.frame(height: 150)
+          Button("Copy complete report") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(fields.formatted, forType: .string)
+          }
+        }
+      }.font(.caption)
       Button("Open full port map…") { model.open("ports") }
     }
   }
@@ -564,9 +610,14 @@ private struct NativeRoot: View {
   let popover = NSPopover()
   let callback: DRCMenuCallback
   private var timer: Timer?
+  private var monitoringActivity: NSObjectProtocol?
   init(callback: @escaping DRCMenuCallback) {
     self.callback = callback
     super.init()
+    // Keep the user-requested monitor scheduled when its popover is closed.
+    // Idle system sleep remains allowed; sleeping hosts produce genuine chart gaps.
+    monitoringActivity = ProcessInfo.processInfo.beginActivity(
+      options: .userInitiatedAllowingIdleSystemSleep, reason: "Continuous DRC host monitoring")
     model.action = { [weak self] code, text in self?.send(code, text) }
     popover.behavior = .transient
     popover.animates = true
@@ -581,6 +632,12 @@ private struct NativeRoot: View {
       button.action = #selector(clicked(_:))
       button.sendAction(on: [.leftMouseUp, .rightMouseUp])
     }
+    model.sample()
+    let timer = Timer(timeInterval: 2.5, repeats: true) { [weak self] _ in
+      Task { @MainActor [weak self] in self?.model.sample() }
+    }
+    self.timer = timer
+    RunLoop.main.add(timer, forMode: .common)
   }
   func send(_ code: Int32, _ text: String? = nil) {
     if let text { text.withCString { callback(code, $0) } } else { callback(code, nil) }
@@ -620,16 +677,8 @@ private struct NativeRoot: View {
   func popoverDidShow(_ notification: Notification) {
     send(7, "1")
     model.begin()
-    timer?.invalidate()
-    let timer = Timer(timeInterval: 2.5, repeats: true) { [weak self] _ in
-      Task { @MainActor [weak self] in self?.model.sample() }
-    }
-    self.timer = timer
-    RunLoop.main.add(timer, forMode: .common)
   }
   func popoverDidClose(_ notification: Notification) {
-    timer?.invalidate()
-    timer = nil
     send(7, "0")
   }
   func receive(_ text: String) {

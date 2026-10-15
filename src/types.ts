@@ -58,6 +58,7 @@ export interface QueryResult {
   record: CommandRecord;
   fields: Json | null;
   parseError: string | null;
+  topology?: import("./portTopology").PortNode[];
 }
 export interface DeviceEvent {
   observedAt: number;
