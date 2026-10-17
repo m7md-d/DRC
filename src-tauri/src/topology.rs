@@ -401,6 +401,10 @@ fn mac(fields: &Value) -> Vec<Node> {
     }
     fn merge_registry(n: Node, roots: &mut Vec<Node>, parent: Option<&str>) {
         if let Some(existing) = find_mut(roots, &n.id) {
+            if n.kind == "USB storage device" {
+                existing.kind = n.kind.clone();
+                existing.label = n.label.clone();
+            }
             existing.observations.extend(n.observations);
         } else {
             let mut copy = n.clone();
@@ -417,6 +421,14 @@ fn mac(fields: &Value) -> Vec<Node> {
     }
     for n in registry_nodes {
         merge_registry(n, &mut roots, None)
+    }
+    for (i, p) in objects(&fields["IORegistryStorageReport"]["fields"])
+        .iter()
+        .enumerate()
+    {
+        for n in hardware(p, &format!("storage-service/{i}"), 0) {
+            merge_registry(n, &mut roots, None);
+        }
     }
     let mut flat = vec![];
     each(&roots, &mut flat);
@@ -657,6 +669,7 @@ pub fn connection_nodes(fields: Option<&Value>) -> Option<Vec<Node>> {
         "SPNVMeDataType",
         "IORegistryUSBReport",
         "IORegistryPortReport",
+        "IORegistryStorageReport",
     ]
     .iter()
     .any(|k| f.get(k).is_some())
@@ -673,6 +686,19 @@ pub fn connection_nodes(fields: Option<&Value>) -> Option<Vec<Node>> {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn usb_service_plane_adds_unassigned_media_without_duplicating_its_bridge() {
+        let bridge = json!({"IOObjectClass":"IOUSBHostDevice","IORegistryEntryID":"100","USB Product Name":"Fixture SSD"});
+        let mut service = bridge.clone();
+        service["IORegistryEntryChildren"] = json!([{"IOObjectClass":"IOUSBMassStorageUASDriver","IORegistryEntryChildren":[{"IOObjectClass":"IOMedia","IORegistryEntryID":"102","Whole":true,"Size":"256060514304"}]}]);
+        let f = json!({"IORegistryUSBReport":{"fields":[bridge]},"IORegistryStorageReport":{"fields":[service]}});
+        let nodes = connection_nodes(Some(&f)).unwrap();
+        assert_eq!(nodes.len(), 1);
+        assert_eq!(nodes[0].kind, "USB storage device");
+        assert_eq!(nodes[0].children.len(), 1);
+        assert_eq!(nodes[0].children[0].fields["Size"], "256060514304");
+        assert!(nodes[0].children[0].disk_ids.is_empty());
+    }
     #[test]
     fn usb_interfaces_enrich_one_linux_device_instead_of_creating_duplicate_hardware() {
         let f = json!({"USBDevices":[{"sysfsName":"1-1","product":"USB bridge"},{"sysfsName":"1-1:1.0","parentSysfsName":"1-1","authorized":"1"},{"sysfsName":"1-1:1.1","parentSysfsName":"1-1","future":"x"}]});

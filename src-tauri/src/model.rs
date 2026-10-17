@@ -73,10 +73,26 @@ pub struct Device {
 #[serde(rename_all = "camelCase")]
 pub struct Discovery {
     pub devices: Vec<Device>,
+    /// Host observations without a currently listed block device. Never operation sources.
+    #[serde(default)]
+    pub unavailable_media: Vec<UnavailableMedia>,
     pub observed_at: u64,
     pub platform: String,
     pub enumeration: Value,
     pub warnings: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnavailableMedia {
+    pub id: String,
+    pub name: String,
+    pub stage: String,
+    pub size_bytes: Option<String>,
+    pub bsd_name: Option<String>,
+    pub transport: Option<String>,
+    pub observed_at: u64,
+    pub fields: Value,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

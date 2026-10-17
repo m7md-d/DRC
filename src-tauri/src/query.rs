@@ -20,6 +20,8 @@ pub enum ReadQuery {
     Connections,
     UsbRegistry,
     UsbHostPorts,
+    UsbStorageServices,
+    MediaRegistry,
     SmartInfo {
         executable: String,
         device: String,
@@ -100,6 +102,26 @@ impl ReadQuery {
                     "-r".into(),
                     "-c".into(),
                     "AppleUSBHostPort".into(),
+                    "-l".into(),
+                ],
+            ),
+            Self::UsbStorageServices => (
+                "/usr/sbin/ioreg".into(),
+                vec![
+                    "-a".into(),
+                    "-r".into(),
+                    "-c".into(),
+                    "IOUSBHostDevice".into(),
+                    "-l".into(),
+                ],
+            ),
+            Self::MediaRegistry => (
+                "/usr/sbin/ioreg".into(),
+                vec![
+                    "-a".into(),
+                    "-r".into(),
+                    "-c".into(),
+                    "IOMedia".into(),
                     "-l".into(),
                 ],
             ),

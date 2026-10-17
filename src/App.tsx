@@ -43,7 +43,9 @@ import { ByteValue } from "./ByteValue";
 import { Hints } from "./Hints";
 import { PortTree } from "./PortTree";
 import { Select } from "./Select";
+import { UnavailableMediaView, observationLabel } from "./UnavailableMediaView";
 import { listen } from "@tauri-apps/api/event";
+import { version } from "../package.json";
 
 const tabs: { key: Tab; label: string; icon: IconName }[] = [
   { key: "device", label: "Device", icon: "drive" },
@@ -440,6 +442,7 @@ export function App() {
   const acquiringRef = useRef(false);
   const [snapshot, setSnapshot] = useState<Discovery | null>(null);
   const [selection, setSelection] = useState<string | null>(null);
+  const [observationSelection, setObservationSelection] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("device");
   const [records, setRecords] = useState<CommandRecord[]>([]);
   const [events, setEvents] = useState<DeviceEvent[]>([]);
@@ -467,10 +470,13 @@ export function App() {
   const eventRefresh = useRef<ReturnType<typeof setTimeout> | null>(null);
   const watcherRef = useRef(false);
   const device = snapshot?.devices.find((item) => item.id === selection);
+  const observedMedia = snapshot?.unavailableMedia ?? [];
+  const observedSelection = observedMedia.find(item => item.id === observationSelection);
   const menuNavigate = useRef<(value: {section: string; deviceId: string | null}) => Promise<void>>(async () => {});
   menuNavigate.current = async ({section, deviceId}) => {
     if (archivedRef.current) await liveSession();
     if (deviceId && inventoryRef.current?.devices.some(d => d.id === deviceId)) {
+      setObservationSelection(null);
       selectionRef.current = deviceId;
       setSelection(deviceId);
     }
@@ -577,6 +583,7 @@ export function App() {
       inventoryRef.current = next;
       selectionRef.current = chosen;
       setSelection(chosen);
+      setObservationSelection(current => next.unavailableMedia?.some(item => item.id === current) ? current : null);
       if (previous && !replacement)
         setNotice(
           "The selected device disappeared or its reported descriptor changed. Select a device from the current snapshot.",
@@ -621,6 +628,7 @@ export function App() {
             const chosen = previous ? replacement?.id ?? null : inventoryRef.current ? null : (next.devices.find(d => d.internal === false) ?? next.devices[0])?.id ?? null;
             inventoryRef.current = next; selectionRef.current = chosen;
             setSnapshot(next); setSelection(chosen);
+            setObservationSelection(current => next.unavailableMedia?.some(item => item.id === current) ? current : null);
           },
           connection: (report) => { if (active && !archivedRef.current) setConnection(report); },
           command: (record) => {
@@ -851,6 +859,7 @@ export function App() {
     setConnection(saved.connectionReport);
     setSelectedRecord(saved.commandRecords.at(-1)?.id ?? null);
     setSelection(saved.snapshot?.devices[0]?.id ?? null);
+    setObservationSelection(null);
     setTab("device");
   }
   async function viewSession(id: string) {
@@ -910,7 +919,7 @@ export function App() {
           <span className="brand-name">DRC</span>
           <span className="brand-divider" />
           <span className="brand-subtitle">Disk Recovery Control</span>
-          <span className="version">0.4.6</span>
+          <span className="version">{version}</span>
         </div>
         <div className="header-actions">
           <div className="mode-switch" aria-label="Workspace experience"><button aria-pressed={experience === "easy"} onClick={() => changeExperience("easy")}>Easy</button><button aria-pressed={experience === "professional"} onClick={() => changeExperience("professional")}>Professional</button></div>
@@ -968,7 +977,7 @@ export function App() {
           <div className="sidebar-title">
             <span className="eyebrow">CONNECTED MEDIA</span>
             <span className="sidebar-count">
-              {snapshot?.devices.length ?? "—"}
+              {snapshot ? snapshot.devices.length + observedMedia.length : "—"}
             </span>
           </div>
           <label className="search device-search">
@@ -991,6 +1000,7 @@ export function App() {
                         key={item.token}
                         className={`device-item ${selection === item.id ? "selected" : ""}`}
                         onClick={() => {
+                          setObservationSelection(null);
                           setSelection(item.id);
                           selectionRef.current = item.id;
                         }}
@@ -1020,7 +1030,7 @@ export function App() {
                   </div>
                 ),
             )}
-            {visibleDevices.length === 0 && (
+            {visibleDevices.length === 0 && observedMedia.length === 0 && (
               <div className="sidebar-empty">
                 <Icon name="drive" size={24} />
                 <p>
@@ -1034,6 +1044,12 @@ export function App() {
                 </p>
               </div>
             )}
+            {observedMedia.filter(item => `${item.name} ${item.bsdName ?? ""}`.toLowerCase().includes(query.toLowerCase())).length > 0 && <div className="device-group observed-device-group">
+              <h2>Detected · unavailable for imaging</h2>
+              {observedMedia.filter(item => `${item.name} ${item.bsdName ?? ""}`.toLowerCase().includes(query.toLowerCase())).map(item => <button key={item.id} className={`device-item ${observedSelection?.id === item.id ? "selected" : ""}`} onClick={() => { setObservationSelection(item.id); setSelection(null); selectionRef.current = null; }} data-hint="Published host metadata. This is not a usable physical disk source, so no scan or copy is offered.">
+                <div className="device-icon"><Icon name="usb" size={22}/></div><div className="device-summary"><span className="device-name">{item.name}</span><span className="device-meta"><ByteValue value={item.sizeBytes}/></span><span className="device-protocol">{observationLabel(item.stage)}</span></div><Icon name="chevron" size={12}/>
+              </button>)}
+            </div>}
           </div>
           <div className="sidebar-bottom">
             <button
@@ -1065,7 +1081,7 @@ export function App() {
               <Icon name="grid" size={14} />
               <span>Storage workspace</span>
               <Icon name="chevron" size={12} />
-              <code>{device ? `/dev/${device.id}` : "No selection"}</code>
+              <code>{observedSelection ? "Host observation" : device ? `/dev/${device.id}` : "No selection"}</code>
             </div>
             <span className="snapshot-time">
               <Icon name="clock" size={12} />
@@ -1117,7 +1133,7 @@ export function App() {
             </div>
           ))}
 
-          {experience === "easy" ? <EasyWorkspace device={device} smart={device ? smart[device.identityKey] : undefined} jobs={jobs} tools={tools} disabled={!!busy || !native || archived} inspect={() => { setEasyReading("smart"); void runSmart(); }} connections={() => { setEasyReading("connection"); void runConnection(); }} acquire={() => setAcquisitionOpen(true)} images={() => setImageOpen(true)} details={() => { changeExperience("professional"); setTab("device"); }} reference={() => setReferenceOpen(true)} /> : device ? (
+          {observedSelection ? <UnavailableMediaView item={observedSelection} refresh={() => void refresh()} ports={() => { setEasyReading("connection"); void runConnection(); }} disabled={!!busy || !native || archived}/> : experience === "easy" ? <EasyWorkspace device={device} smart={device ? smart[device.identityKey] : undefined} jobs={jobs} tools={tools} disabled={!!busy || !native || archived} inspect={() => { setEasyReading("smart"); void runSmart(); }} connections={() => { setEasyReading("connection"); void runConnection(); }} acquire={() => setAcquisitionOpen(true)} images={() => setImageOpen(true)} details={() => { changeExperience("professional"); setTab("device"); }} reference={() => setReferenceOpen(true)} /> : device ? (
             <>
               <div className="device-heading">
                 <div className="device-heading-icon">
@@ -1372,7 +1388,7 @@ export function App() {
           <span className="status-separator">/</span>
           <span>{records.length} commands</span>
           <span className="status-separator">/</span>
-          <span>DRC 0.4.6</span>
+          <span>DRC {version}</span>
         </div>
       </footer>
       {notice && (

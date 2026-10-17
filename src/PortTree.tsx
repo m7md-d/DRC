@@ -158,6 +158,7 @@ export function PortTree({ report }: { report: QueryResult }) {
               <div className="port-readings">
                 {(getField(inspected?.fields ?? node.fields, "sizeBytes") ??
                   getField(inspected?.fields ?? node.fields, "size_in_bytes") ??
+                  getField(inspected?.fields ?? node.fields, "Size") ??
                   getField(inspected?.fields ?? node.fields, "size")) !==
                   undefined && (
                   <article>
@@ -173,6 +174,7 @@ export function PortTree({ report }: { report: QueryResult }) {
                             inspected?.fields ?? node.fields,
                             "size_in_bytes",
                           ) ??
+                          getField(inspected?.fields ?? node.fields, "Size") ??
                           getField(inspected?.fields ?? node.fields, "size")
                         }
                       />

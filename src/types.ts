@@ -48,10 +48,22 @@ export interface Device {
 
 export interface Discovery {
   devices: Device[];
+  unavailableMedia?: UnavailableMedia[];
   observedAt: number;
   platform: string;
   enumeration: Json;
   warnings: string[];
+}
+
+export interface UnavailableMedia {
+  id: string;
+  name: string;
+  stage: "interface-only" | "media-unassigned" | "not-listed" | "enumeration-unavailable";
+  sizeBytes: string | null;
+  bsdName: string | null;
+  transport: string | null;
+  observedAt: number;
+  fields: Json;
 }
 
 export interface QueryResult {

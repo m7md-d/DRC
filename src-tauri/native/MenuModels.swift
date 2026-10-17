@@ -86,7 +86,22 @@ struct Disk: Decodable, Identifiable {
 }
 struct Discovery: Decodable {
   let devices: [Disk]
+  let unavailableMedia: [UnavailableDisk]?
   let observedAt: UInt64
+}
+struct UnavailableDisk: Decodable, Identifiable {
+  let id: String, name: String, stage: String
+  let sizeBytes: String?, bsdName: String?, transport: String?
+  let observedAt: UInt64
+  let fields: JSONValue
+  var stageLabel: String {
+    switch stage {
+    case "interface-only": return "Storage interface · no media reported"
+    case "media-unassigned": return "Media detected · no disk identifier"
+    case "not-listed": return "Identifier absent from disk list"
+    default: return "Physical disk list unavailable"
+    }
+  }
 }
 struct Record: Decodable {
   let startedAt: UInt64

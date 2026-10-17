@@ -315,6 +315,37 @@ private struct DisksSection: View {
         Label("Connection event since this snapshot", systemImage: "info.circle").font(.caption)
           .foregroundStyle(.secondary)
       }
+      ForEach(model.snapshot?.discovery?.unavailableMedia ?? []) { item in
+        GroupBox {
+          VStack(alignment: .leading, spacing: 7) {
+            HStack {
+              Image(systemName: "externaldrive.badge.questionmark").foregroundStyle(.orange)
+              Text(item.name).font(.headline)
+              Spacer()
+              ExactBytes(value: item.sizeBytes).font(.caption)
+            }
+            Text(item.stageLabel).font(.caption).foregroundStyle(.secondary)
+            if let transport = item.transport {
+              Text(transport).font(.caption2).foregroundStyle(.secondary)
+            }
+            Text(
+              "Reported capacity does not confirm readable data. Imaging is unavailable for this observation."
+            )
+            .font(.caption2).foregroundStyle(.secondary)
+            DisclosureGroup(
+              "Original registry properties", isExpanded: model.binding(item.id + "/properties")
+            ) {
+              ScrollView([.horizontal, .vertical]) {
+                Text(item.fields.formatted).font(.system(.caption2, design: .monospaced))
+                  .textSelection(.enabled)
+              }.frame(height: 100)
+            }.font(.caption)
+            Button("Inspect enclosure…") { model.open("ports", diskID: nil) }.font(.caption)
+          }.padding(4)
+        }.help(
+          "Host metadata for storage without a currently listed physical disk. This is not an acquisition source."
+        )
+      }
       if let disk {
         Picker("Disk", selection: $model.selectedID) {
           ForEach(model.snapshot?.discovery?.devices ?? []) { d in Text(d.name).tag(d.id) }

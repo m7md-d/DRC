@@ -26,7 +26,7 @@ export function FieldTable({
   const visible = useMemo(
     () =>
       fields.filter((field) =>
-        `${field.path} ${isByteField(field.path, field.value) ? <ByteValue value={field.value}/> : displayValue(field.value)}`
+        `${field.path} ${displayValue(field.value)}`
           .toLowerCase()
           .includes(filter.toLowerCase()),
       ),

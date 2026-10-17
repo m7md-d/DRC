@@ -215,6 +215,7 @@ impl PlatformBackend for LinuxBackend {
         }
         Ok(Discovery {
             devices,
+            unavailable_media: vec![],
             observed_at: now_ms(),
             platform: "Linux".into(),
             enumeration,

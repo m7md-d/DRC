@@ -92,67 +92,118 @@ pub fn smart_path() -> Option<String> {
     .map(str::to_owned)
 }
 
+fn discover_mac(
+    record: &mut dyn FnMut(CommandRecord),
+    mut run: impl FnMut(ReadQuery) -> Result<CommandRecord, String>,
+) -> Result<Discovery, String> {
+    let listing = run(ReadQuery::ListPhysical)?;
+    let parsed = successful_plist(&listing);
+    record(listing);
+    let mut warnings = Vec::new();
+    let mut enumeration = match parsed {
+        Ok(value) => value,
+        Err(error) => {
+            warnings.push(format!("Physical disk enumeration unavailable: {error}"));
+            serde_json::json!({})
+        }
+    };
+    let listing_ok = enumeration
+        .get("AllDisksAndPartitions")
+        .and_then(Value::as_array)
+        .is_some();
+    if !listing_ok && warnings.is_empty() {
+        warnings.push("diskutil did not return AllDisksAndPartitions; registry observations remain available.".into());
+    }
+    let entries = enumeration
+        .get("AllDisksAndPartitions")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let generation = GENERATION.fetch_add(1, Ordering::Relaxed);
+    let mut devices = Vec::new();
+    for layout in &entries {
+        let Some(id) = string_field(layout, "DeviceIdentifier").filter(|id| valid_device_id(id))
+        else {
+            warnings.push("A layout entry had no valid DeviceIdentifier; it remains in the complete enumeration.".into());
+            continue;
+        };
+        let response = run(ReadQuery::DeviceInfo(id.clone()))?;
+        let info_result = successful_plist(&response);
+        let observed_at = response.started_at;
+        record(response);
+        let (info, info_error) = match info_result {
+            Ok(value) => (value, None),
+            Err(error) => (Value::Null, Some(error)),
+        };
+        let name = string_field(&info, "MediaName")
+            .or_else(|| string_field(&info, "IORegistryEntryName"))
+            .unwrap_or_else(|| id.clone());
+        devices.push(Device {
+            id: id.clone(),
+            token: format!("{generation}:{id}"),
+            identity_key: identity_key(&info),
+            name,
+            size_bytes: string_field(&info, "TotalSize").or_else(|| string_field(layout, "Size")),
+            internal: info.get("Internal").and_then(Value::as_bool),
+            protocol: string_field(&info, "BusProtocol"),
+            content: string_field(layout, "Content"),
+            partitions: layout
+                .get("Partitions")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default(),
+            layout: layout.clone(),
+            info,
+            info_error,
+            observed_at,
+            metadata_only: false,
+            protection_reason: None,
+        });
+    }
+    // IORegistry publishes interfaces and media before Disk Arbitration necessarily
+    // creates a usable disk. Read properties only; never probe or open that medium.
+    let mut host = serde_json::Map::new();
+    for (key, query) in [
+        ("usbServices", ReadQuery::UsbStorageServices),
+        ("media", ReadQuery::MediaRegistry),
+    ] {
+        let response = run(query)?;
+        let fields = match successful_plist(&response) {
+            Ok(value) => value,
+            Err(error) => {
+                warnings.push(format!("{key} metadata unavailable: {error}"));
+                Value::Null
+            }
+        };
+        host.insert(key.into(), fields);
+        record(response);
+    }
+    let observed_at = now_ms();
+    let listed = devices.iter().map(|d| d.id.clone()).collect();
+    let unavailable_media = crate::storage_observations::unavailable(
+        &host["usbServices"],
+        &host["media"],
+        &listed,
+        listing_ok,
+        observed_at,
+    );
+    if !enumeration.is_object() {
+        enumeration = serde_json::json!({"OriginalPhysicalEnumeration":enumeration});
+    }
+    enumeration["DRCHostMetadata"] = Value::Object(host);
+    Ok(Discovery {
+        devices,
+        unavailable_media,
+        observed_at,
+        platform: "macOS".into(),
+        enumeration,
+        warnings,
+    })
+}
+
 impl PlatformBackend for MacOsBackend {
     fn discover(&self, record: &mut dyn FnMut(CommandRecord)) -> Result<Discovery, String> {
-        let listing = execute(ReadQuery::ListPhysical)?;
-        let parsed = successful_plist(&listing);
-        record(listing);
-        let enumeration = parsed?;
-        let entries = enumeration
-            .get("AllDisksAndPartitions")
-            .and_then(Value::as_array)
-            .ok_or("diskutil did not return AllDisksAndPartitions; raw output is retained.")?;
-        let generation = GENERATION.fetch_add(1, Ordering::Relaxed);
-        let mut devices = Vec::new();
-        let mut warnings = Vec::new();
-        for layout in entries {
-            let Some(id) =
-                string_field(layout, "DeviceIdentifier").filter(|id| valid_device_id(id))
-            else {
-                warnings.push("A layout entry had no valid DeviceIdentifier; it remains in the complete enumeration.".into());
-                continue;
-            };
-            let response = execute(ReadQuery::DeviceInfo(id.clone()))?;
-            let info_result = successful_plist(&response);
-            let observed_at = response.started_at;
-            record(response);
-            let (info, info_error) = match info_result {
-                Ok(value) => (value, None),
-                Err(error) => (Value::Null, Some(error)),
-            };
-            let name = string_field(&info, "MediaName")
-                .or_else(|| string_field(&info, "IORegistryEntryName"))
-                .unwrap_or_else(|| id.clone());
-            devices.push(Device {
-                id: id.clone(),
-                token: format!("{generation}:{id}"),
-                identity_key: identity_key(&info),
-                name,
-                size_bytes: string_field(&info, "TotalSize")
-                    .or_else(|| string_field(layout, "Size")),
-                internal: info.get("Internal").and_then(Value::as_bool),
-                protocol: string_field(&info, "BusProtocol"),
-                content: string_field(layout, "Content"),
-                partitions: layout
-                    .get("Partitions")
-                    .and_then(Value::as_array)
-                    .cloned()
-                    .unwrap_or_default(),
-                layout: layout.clone(),
-                info,
-                info_error,
-                observed_at,
-                metadata_only: false,
-                protection_reason: None,
-            });
-        }
-        Ok(Discovery {
-            devices,
-            observed_at: now_ms(),
-            platform: "macOS".into(),
-            enumeration,
-            warnings,
-        })
+        discover_mac(record, execute)
     }
 
     fn connections(&self, sink: &mut dyn FnMut(CommandRecord)) -> Result<QueryResult, String> {
@@ -168,6 +219,7 @@ impl PlatformBackend for MacOsBackend {
         for (key, query) in [
             ("IORegistryUSBReport", ReadQuery::UsbRegistry),
             ("IORegistryPortReport", ReadQuery::UsbHostPorts),
+            ("IORegistryStorageReport", ReadQuery::UsbStorageServices),
         ] {
             let registry = execute(query)?;
             let (properties, registry_error) = match successful_plist(&registry) {
@@ -340,6 +392,28 @@ pub fn read_info(id: &str, sink: &mut dyn FnMut(CommandRecord)) -> Result<Value,
 mod tests {
     use super::*;
 
+    fn fixture_record(value: Value, timed_out: bool) -> CommandRecord {
+        use base64::Engine;
+        let mut bytes = vec![];
+        plist::to_writer_xml(&mut bytes, &value).unwrap();
+        serde_json::from_value(serde_json::json!({"id":"fixture","program":"fixture","arguments":[],"startedAt":1,"durationMs":0,"exitCode":if timed_out {None} else {Some(0)},"timedOut":timed_out,"stdout":String::from_utf8_lossy(&bytes),"stderr":"","stdoutBase64":base64::engine::general_purpose::STANDARD.encode(&bytes),"stderrBase64":"","stdoutUtf8Valid":true,"stderrUtf8Valid":true,"launchError":null})).unwrap()
+    }
+    #[test]
+    fn failed_diskutil_enumeration_still_returns_registry_observations_and_records() {
+        let mut records = vec![];
+        let result = discover_mac(&mut |r| records.push(r), |q| Ok(match q {
+            ReadQuery::ListPhysical => fixture_record(serde_json::json!({}), true),
+            ReadQuery::UsbStorageServices => fixture_record(serde_json::json!([{"IOObjectClass":"IOUSBHostDevice","IORegistryEntryID":"100","USB Product Name":"Fixture SSD","IORegistryEntryChildren":[{"IOObjectClass":"IOMedia","IORegistryEntryID":"102","Whole":true,"Size":"256060514304"}]}]),false),
+            ReadQuery::MediaRegistry => fixture_record(serde_json::json!([]),false),
+            _ => panic!("Must not issue per-device or SMART queries without listed devices"),
+        })).unwrap();
+        assert!(result.devices.is_empty());
+        assert_eq!(result.unavailable_media.len(), 1);
+        assert_eq!(result.unavailable_media[0].stage, "media-unassigned");
+        assert_eq!(records.len(), 3);
+        assert!(records[0].timed_out);
+        assert_eq!(result.warnings.len(), 1);
+    }
     #[test]
     fn identity_changes_when_reused_disk_number_has_different_descriptor() {
         let original =

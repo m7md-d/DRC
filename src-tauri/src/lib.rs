@@ -11,6 +11,9 @@ mod platform;
 mod policy;
 mod query;
 mod rates;
+#[cfg(target_os = "macos")]
+mod registry_watch;
+mod storage_observations;
 mod store;
 mod topology;
 
@@ -288,6 +291,8 @@ fn start_device_watch(
         }
         let _ = stdout_app.emit("watch-stopped", ());
     });
+    #[cfg(target_os = "macos")]
+    registry_watch::start(app.clone());
     std::thread::spawn(move || {
         for line in BufReader::new(stderr).lines() {
             match line {
@@ -309,6 +314,8 @@ fn stop_device_watch(state: tauri::State<'_, Runtime>) -> Result<(), String> {
 }
 
 fn stop_watcher(state: &Runtime) {
+    #[cfg(target_os = "macos")]
+    registry_watch::stop();
     if let Ok(mut watcher) = state.watcher.lock() {
         if let Some(mut child) = watcher.take() {
             let _ = child.kill();

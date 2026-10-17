@@ -92,6 +92,20 @@ import Foundation
       "Frequency header identifies both CPU tiers")
     let exact = try JSONDecoder().decode(JSONValue.self, from: Data("18446744073709551615".utf8))
     check(exact.text == String(UInt64.max), "Original JSON numbers retain exact integer precision")
+    let observed = try JSONDecoder().decode(
+      Discovery.self,
+      from: Data(
+        #"{"devices":[],"observedAt":1,"unavailableMedia":[{"id":"observed:102","name":"Fixture SSD","stage":"media-unassigned","sizeBytes":"256060514304","bsdName":null,"transport":"USB","observedAt":1,"fields":{"media":{"Size":"256060514304"}}}]}"#
+          .utf8))
+    check(
+      observed.devices.isEmpty && observed.unavailableMedia?.count == 1,
+      "Unassigned media are observations, never acquisition disks")
+    check(
+      observed.unavailableMedia?.first?.stageLabel == "Media detected · no disk identifier",
+      "Native menu explains the missing identifier")
+    let legacy = try JSONDecoder().decode(
+      Discovery.self, from: Data(#"{"devices":[],"observedAt":1}"#.utf8))
+    check(legacy.unavailableMedia == nil, "Older discovery snapshots still decode")
     print("Native menu models: \(checks) checks passed")
   }
 }

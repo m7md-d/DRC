@@ -1,4 +1,5 @@
 const paths = {
+  check: <path d="m5 12 4 4L19 6" />,
   power: <><path d="M12 2v9M7 5a9 9 0 1 0 10 0"/></>,
   usb: <><path d="M12 3v14m-3-11 3-3 3 3M12 13l-6-3V7m6 8 6-4V8"/><circle cx="6" cy="6" r="1.5"/><rect x="16.5" y="5" width="3" height="3"/><circle cx="12" cy="19" r="2"/></>,
   hub: <><rect x="8" y="3" width="8" height="5" rx="1"/><path d="M12 8v5M4 17v-4h16v4"/><rect x="1" y="17" width="6" height="4" rx="1"/><rect x="9" y="17" width="6" height="4" rx="1"/><rect x="17" y="17" width="6" height="4" rx="1"/></>,
