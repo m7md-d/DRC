@@ -37,6 +37,14 @@ pub fn successful_plist(record: &CommandRecord) -> Result<Value, String> {
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(&record.stdout_base64)
         .map_err(|e| e.to_string())?;
+    // ioreg -a returns zero bytes with exit 0 when no services match.
+    // Other tools and failed/timed-out queries must still report their errors.
+    if record.program == "/usr/sbin/ioreg"
+        && record.arguments.iter().any(|a| a == "-a")
+        && bytes.is_empty()
+    {
+        return Ok(serde_json::json!([]));
+    }
     let value = parse_plist(&bytes)?;
     if value.get("Error") == Some(&Value::Bool(true))
         || string_field(&value, "ExitCode").is_some_and(|code| code != "0")
@@ -92,7 +100,7 @@ pub fn smart_path() -> Option<String> {
     .map(str::to_owned)
 }
 
-fn discover_mac(
+pub(crate) fn discover_mac(
     record: &mut dyn FnMut(CommandRecord),
     mut run: impl FnMut(ReadQuery) -> Result<CommandRecord, String>,
 ) -> Result<Discovery, String> {
@@ -413,6 +421,28 @@ mod tests {
         assert_eq!(records.len(), 3);
         assert!(records[0].timed_out);
         assert_eq!(result.warnings.len(), 1);
+    }
+    #[test]
+    fn successful_empty_ioreg_is_no_matching_services_but_other_empty_results_are_errors() {
+        let mut r = fixture_record(serde_json::json!([]), false);
+        r.stdout.clear();
+        r.stdout_base64.clear();
+        r.program = "/usr/sbin/ioreg".into();
+        r.arguments = vec![
+            "-a".into(),
+            "-r".into(),
+            "-c".into(),
+            "IOUSBHostDevice".into(),
+        ];
+        assert_eq!(successful_plist(&r).unwrap(), serde_json::json!([]));
+        r.exit_code = Some(1);
+        assert!(successful_plist(&r).is_err());
+        r.exit_code = Some(0);
+        r.timed_out = true;
+        assert!(successful_plist(&r).is_err());
+        r.timed_out = false;
+        r.program = "/usr/sbin/diskutil".into();
+        assert!(successful_plist(&r).is_err());
     }
     #[test]
     fn identity_changes_when_reused_disk_number_has_different_descriptor() {

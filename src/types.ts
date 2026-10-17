@@ -99,6 +99,22 @@ export interface SessionData {
   originalImport: string | null;
   imageReports?: Json[];
   hostEvidence?: Json[];
+  recoveryRuns?: RecoveryRun[];
+}
+
+export interface RecoveryTarget {
+  key: string; name: string; kind: "device" | "observation" | "port";
+  device: Device | null; observation: UnavailableMedia | null; port: Json | null;
+}
+export interface RecoveryOptions { directScsi: boolean; reconnectUsb: boolean }
+export interface RecoveryIssue { code: string; title: string; detail: string; scope: string; evidence: Json }
+export interface RecoveryStep {
+  key: string; label: string; state: "pending" | "running" | "passed" | "failed" | "skipped" | "not-run";
+  startedAt: number | null; finishedAt: number | null; detail: string; evidence: Json; issue: RecoveryIssue | null; commandIds: string[];
+}
+export interface RecoveryRun {
+  id: string; target: RecoveryTarget; options: RecoveryOptions; state: "running" | "stopped" | "cancelled" | "ready" | "interrupted";
+  startedAt: number; updatedAt: number; steps: RecoveryStep[]; issue: RecoveryIssue | null; source: Device | null;
 }
 
 export interface ImageSource {

@@ -17,6 +17,7 @@ import type {
   ExtractionPlan,
   ExtractionJob,
   ArtifactPage,
+  RecoveryRun, RecoveryTarget, RecoveryOptions,
 } from "./types";
 
 export const native = isTauri();
@@ -35,6 +36,9 @@ function request<T>(
 }
 
 export const bridge = {
+  recoveryTargets: () => request<RecoveryTarget[]>("recovery_targets"),
+  recoveryChecks: (targetKey: string, options: RecoveryOptions) => request<RecoveryRun>("run_recovery_checks", { targetKey, options }),
+  stopRecoveryChecks: () => request<void>("stop_recovery_checks"),
   hostEvidence: (kind: "topology" | "kernel") => request<QueryResult>("read_host_evidence", { kind }),
   discover: () => request<Discovery>("discover_devices"),
   tools: () => request<ToolReport[]>("installed_tools"),
@@ -93,6 +97,7 @@ export const bridge = {
 };
 
 export async function subscribe(handlers: {
+  recovery?: (value: RecoveryRun) => void;
   discovery?: (value: Discovery) => void;
   connection?: (value: QueryResult) => void;
   command: (value: CommandRecord) => void;
@@ -106,6 +111,7 @@ export async function subscribe(handlers: {
 }): Promise<UnlistenFn> {
   if (!native) return () => {};
   const unlisten = await Promise.all([
+    listen<RecoveryRun>("recovery-update", event => handlers.recovery?.(event.payload)),
     listen<Discovery>("live-discovery", (event) => handlers.discovery?.(event.payload)),
     listen<QueryResult>("live-connection", (event) => handlers.connection?.(event.payload)),
     listen<CommandRecord>("command-record", (event) =>

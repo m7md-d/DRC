@@ -172,6 +172,30 @@ pub fn allowed_smart_path(path: &str) -> bool {
 
 pub fn execute(query: ReadQuery) -> Result<CommandRecord, String> {
     let (program, arguments) = query.command()?;
+    let timeout = if matches!(query, ReadQuery::Connections) {
+        Duration::from_secs(45)
+    } else {
+        Duration::from_secs(15)
+    };
+    execute_process(
+        program,
+        arguments,
+        timeout,
+        None,
+        &std::sync::atomic::AtomicBool::new(false),
+        &mut || {},
+    )
+}
+
+/// Backend-owned commands only. Source bytes are never returned in a read-check record.
+pub(crate) fn execute_process(
+    program: String,
+    arguments: Vec<String>,
+    timeout: Duration,
+    input: Option<std::fs::File>,
+    cancel: &std::sync::atomic::AtomicBool,
+    stopping: &mut dyn FnMut(),
+) -> Result<CommandRecord, String> {
     let started_at = now_ms();
     let start = Instant::now();
     let mut record = CommandRecord {
@@ -196,10 +220,15 @@ pub fn execute(query: ReadQuery) -> Result<CommandRecord, String> {
         termination_signal: None,
         stdin: None,
     };
+    if cancel.load(Ordering::Relaxed) {
+        record.launch_error =
+            Some("Cancelled before command launch; no process was started.".into());
+        return Ok(record);
+    }
     let child = Command::new(&program)
         .args(&arguments)
         .env("LC_ALL", "C")
-        .stdin(Stdio::null())
+        .stdin(input.map(Stdio::from).unwrap_or_else(Stdio::null))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn();
@@ -221,11 +250,6 @@ pub fn execute(query: ReadQuery) -> Result<CommandRecord, String> {
         let mut bytes = Vec::new();
         stderr.read_to_end(&mut bytes).map(|_| bytes)
     });
-    let timeout = if matches!(query, ReadQuery::Connections) {
-        Duration::from_secs(45)
-    } else {
-        Duration::from_secs(15)
-    };
     loop {
         match child.try_wait() {
             Ok(Some(status)) => {
@@ -237,9 +261,12 @@ pub fn execute(query: ReadQuery) -> Result<CommandRecord, String> {
                 }
                 break;
             }
-            Ok(None) if start.elapsed() < timeout => std::thread::sleep(Duration::from_millis(20)),
+            Ok(None) if start.elapsed() < timeout && !cancel.load(Ordering::Relaxed) => {
+                std::thread::sleep(Duration::from_millis(20))
+            }
             Ok(None) => {
-                record.timed_out = true;
+                record.timed_out = start.elapsed() >= timeout;
+                stopping();
                 let _ = child.kill();
                 if let Ok(status) = child.wait() {
                     record.exit_code = status.code();

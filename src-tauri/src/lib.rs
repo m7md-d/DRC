@@ -11,6 +11,8 @@ mod platform;
 mod policy;
 mod query;
 mod rates;
+mod recovery;
+mod recovery_host;
 #[cfg(target_os = "macos")]
 mod registry_watch;
 mod storage_observations;
@@ -38,6 +40,7 @@ struct Runtime {
     acquisition: Arc<AcquisitionManager>,
     images: images::Manager,
     extraction: Arc<extraction::Manager>,
+    recovery: recovery::Manager,
 }
 
 fn require_host() -> Result<(), String> {
@@ -49,6 +52,7 @@ fn require_host() -> Result<(), String> {
 }
 
 fn emit_record(app: &tauri::AppHandle, record: CommandRecord) {
+    app.state::<Runtime>().recovery.record_id(&record.id);
     if let Err(error) = app.state::<Arc<Store>>().append("command", &record) {
         let _ = app.emit("persistence-error", error);
     }
@@ -325,11 +329,73 @@ fn stop_watcher(state: &Runtime) {
 }
 
 fn require_idle(state: &Runtime) -> Result<(), String> {
+    if state.recovery.is_active() {
+        return Err("Recovery checks hold the source/query lock. Stop them before starting another operation.".into());
+    }
     if state.acquisition.is_active() || state.extraction.is_active() {
         Err("A copy operation holds the operation lock. Device/SMART polling is suspended until it stops.".into())
     } else {
         Ok(())
     }
+}
+
+#[tauri::command]
+async fn recovery_targets(app: tauri::AppHandle) -> Result<Vec<recovery::Target>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<Runtime>();
+        require_idle(&state)?;
+        let _gate = state
+            .discovery
+            .try_lock()
+            .map_err(|_| "A metadata query is running")?;
+        recovery_host::targets(&app)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+async fn run_recovery_checks(
+    app: tauri::AppHandle,
+    target_key: String,
+    options: recovery::Options,
+) -> Result<recovery::Run, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<Runtime>();
+        require_idle(&state)?;
+        let _gate = state
+            .discovery
+            .try_lock()
+            .map_err(|_| "Another query is running")?;
+        let target = state.recovery.target(&target_key)?;
+        state.recovery.begin()?;
+        struct Lease<'a>(&'a recovery::Manager);
+        impl Drop for Lease<'_> {
+            fn drop(&mut self) {
+                self.0
+                    .active
+                    .store(false, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        let _lease = Lease(&state.recovery);
+        let mut host = recovery_host::LiveHost::new(app.clone());
+        let run = recovery::execute(
+            recovery::new_run(target, options),
+            &mut host,
+            &state.recovery.cancel,
+            &mut |run| {
+                let saved = app.state::<Arc<Store>>().append("recoveryRun", run);
+                let _ = app.emit("recovery-update", run);
+                saved
+            },
+        );
+        Ok(run)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+fn stop_recovery_checks(state: tauri::State<'_, Runtime>) {
+    state.recovery.stop();
 }
 
 #[tauri::command]
@@ -1037,6 +1103,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             discover_devices,
+            recovery_targets,
+            run_recovery_checks,
+            stop_recovery_checks,
             read_smart,
             read_connections,
             read_host_evidence,
@@ -1077,6 +1146,10 @@ pub fn run() {
         let mut deferred = false;
         if let tauri::RunEvent::ExitRequested { api, .. } = &event {
             let state = app.state::<Runtime>();
+            if state.recovery.is_active() {
+                deferred=true; api.prevent_exit(); state.recovery.stop();
+                let _=app.emit("exit-deferred","Recovery check cancellation requested. DRC keeps the source locked until the current command exits and the report is saved. Quit again after it stops.");
+            }
             if let Some(id) = state.acquisition.active_id() {
                 deferred = true;
                 api.prevent_exit();

@@ -8,6 +8,7 @@ mod mac {
     };
     type CF = *const c_void;
     static TARGETS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    static USB_TARGETS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
     static STARTED: OnceLock<Result<(), String>> = OnceLock::new();
     #[link(name = "DiskArbitration", kind = "framework")]
     unsafe extern "C" {
@@ -21,6 +22,7 @@ mod mac {
         );
         fn DADiskCopyWholeDisk(disk: CF) -> CF;
         fn DADiskGetBSDName(disk: CF) -> *const c_char;
+        fn DADiskCopyIOMedia(disk: CF) -> u32;
         fn DADissenterCreate(allocator: CF, status: i32, message: CF) -> CF;
     }
     #[link(name = "CoreFoundation", kind = "framework")]
@@ -29,6 +31,109 @@ mod mac {
         fn CFRunLoopGetCurrent() -> CF;
         fn CFRunLoopRun();
         fn CFRelease(object: CF);
+        fn CFPropertyListCreateData(
+            allocator: CF,
+            value: CF,
+            format: isize,
+            options: usize,
+            error: *mut CF,
+        ) -> CF;
+        fn CFDataGetLength(data: CF) -> isize;
+        fn CFDataGetBytePtr(data: CF) -> *const u8;
+    }
+    #[link(name = "IOKit", kind = "framework")]
+    unsafe extern "C" {
+        fn IORegistryEntryCreateCFProperties(
+            entry: u32,
+            properties: *mut CF,
+            allocator: CF,
+            options: u32,
+        ) -> i32;
+        fn IORegistryEntryGetParentEntry(entry: u32, plane: *const c_char, parent: *mut u32)
+            -> i32;
+        fn IOObjectRelease(entry: u32) -> i32;
+    }
+    fn denied_usb(disk: CF) -> bool {
+        if USB_TARGETS
+            .get()
+            .and_then(|v| v.lock().ok())
+            .is_none_or(|v| v.is_empty())
+        {
+            return false;
+        }
+        let mut entry = unsafe { DADiskCopyIOMedia(disk) };
+        if entry == 0 {
+            return true;
+        }
+        for _ in 0..64 {
+            let mut properties = std::ptr::null();
+            if unsafe {
+                IORegistryEntryCreateCFProperties(entry, &mut properties, std::ptr::null(), 0)
+            } != 0
+            {
+                unsafe {
+                    IOObjectRelease(entry);
+                };
+                return true;
+            }
+            let data = unsafe {
+                CFPropertyListCreateData(std::ptr::null(), properties, 100, 0, std::ptr::null_mut())
+            };
+            unsafe {
+                CFRelease(properties);
+            };
+            if data.is_null() {
+                unsafe {
+                    IOObjectRelease(entry);
+                };
+                return true;
+            }
+            let bytes = unsafe {
+                std::slice::from_raw_parts(CFDataGetBytePtr(data), CFDataGetLength(data) as usize)
+            };
+            let parsed = crate::model::parse_plist(bytes);
+            unsafe {
+                CFRelease(data);
+            };
+            if let Ok(value) = parsed {
+                let keys = [
+                    super::usb_key(&value).ok(),
+                    crate::model::string_field(&value, "UsbCPortNumber")
+                        .map(|n| format!("host-port:{n}")),
+                ];
+                for key in keys.into_iter().flatten() {
+                    let denied = USB_TARGETS
+                        .get()
+                        .and_then(|v| v.lock().ok())
+                        .is_none_or(|v| v.contains(&key));
+                    if denied {
+                        unsafe {
+                            IOObjectRelease(entry);
+                        };
+                        return true;
+                    }
+                }
+            } else {
+                unsafe {
+                    IOObjectRelease(entry);
+                };
+                return true;
+            }
+            let mut parent = 0;
+            let result =
+                unsafe { IORegistryEntryGetParentEntry(entry, c"IOService".as_ptr(), &mut parent) };
+            unsafe {
+                IOObjectRelease(entry);
+            };
+            if result != 0 || parent == 0 {
+                return false;
+            }
+            entry = parent;
+        }
+        unsafe {
+            IOObjectRelease(entry);
+        };
+        true
     }
     unsafe extern "C" fn approve(disk: CF, _context: *mut c_void) -> CF {
         // SAFETY: Disk Arbitration supplies a valid disk. Copy owns a CF reference.
@@ -45,7 +150,7 @@ mod mac {
                 .get()
                 .and_then(|s| s.lock().ok())
                 .is_some_and(|s| s.contains(name.as_ref()))
-        };
+        } || denied_usb(whole);
         unsafe { CFRelease(whole) };
         if denied {
             unsafe { DADissenterCreate(std::ptr::null(), 0xF8DA0008u32 as i32, std::ptr::null()) }
@@ -57,6 +162,7 @@ mod mac {
         STARTED
             .get_or_init(|| {
                 TARGETS.get_or_init(|| Mutex::new(HashSet::new()));
+                USB_TARGETS.get_or_init(|| Mutex::new(HashSet::new()));
                 let (tx, rx) = mpsc::sync_channel(1);
                 std::thread::spawn(move || unsafe {
                     let session = DASessionCreate(std::ptr::null());
@@ -101,6 +207,67 @@ mod mac {
                 s.remove(id);
             }
         }
+    }
+    pub fn add_usb(key: &str) -> Result<(), String> {
+        start()?;
+        USB_TARGETS
+            .get()
+            .unwrap()
+            .lock()
+            .map_err(|e| e.to_string())?
+            .insert(key.into());
+        Ok(())
+    }
+    pub fn remove_usb(key: &str) {
+        if let Some(values) = USB_TARGETS.get() {
+            if let Ok(mut values) = values.lock() {
+                values.remove(key);
+            }
+        }
+    }
+}
+
+fn usb_key(value: &serde_json::Value) -> Result<String, String> {
+    let parts: Option<Vec<_>> = ["idVendor", "idProduct", "USB Serial Number"]
+        .into_iter()
+        .map(|k| crate::model::string_field(value, k).filter(|s| !s.is_empty()))
+        .collect();
+    serde_json::to_string(&parts.ok_or("USB identity lacks vendor, product or serial")?)
+        .map_err(|e| e.to_string())
+}
+pub struct UsbMountGuard {
+    #[cfg(target_os = "macos")]
+    key: String,
+}
+impl UsbMountGuard {
+    pub fn acquire(value: &serde_json::Value) -> Result<Self, String> {
+        Self::acquire_key(usb_key(value)?)
+    }
+    pub fn acquire_port(number: &str) -> Result<Self, String> {
+        let n = number
+            .parse::<u8>()
+            .ok()
+            .filter(|n| (1..=64).contains(n))
+            .ok_or("Invalid host-port number")?;
+        Self::acquire_key(format!("host-port:{n}"))
+    }
+    fn acquire_key(key: String) -> Result<Self, String> {
+        #[cfg(target_os = "macos")]
+        {
+            mac::add_usb(&key)?;
+            Ok(Self { key })
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = key;
+            Err("USB reconnect mount veto is implemented on macOS only".into())
+        }
+    }
+}
+impl Drop for UsbMountGuard {
+    fn drop(&mut self) {
+        #[cfg(target_os = "macos")]
+        mac::remove_usb(&self.key);
     }
 }
 

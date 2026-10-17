@@ -43,6 +43,8 @@ pub struct SessionData {
     pub image_reports: Vec<Value>,
     #[serde(default)]
     pub host_evidence: Vec<Value>,
+    #[serde(default)]
+    pub recovery_runs: Vec<Value>,
 }
 
 #[derive(Clone, Serialize)]
@@ -237,6 +239,18 @@ impl Store {
                 }
                 "imageReport" => session.image_reports.push(parse(&payload)?),
                 "hostEvidence" => session.host_evidence.push(parse(&payload)?),
+                "recoveryRun" => {
+                    let run = parse(&payload)?;
+                    if let Some(previous) = session
+                        .recovery_runs
+                        .iter_mut()
+                        .find(|v| v["id"] == run["id"])
+                    {
+                        *previous = run;
+                    } else {
+                        session.recovery_runs.push(run);
+                    }
+                }
                 _ => return Err(format!("Unsupported saved entry kind: {kind}")),
             }
         }
@@ -363,6 +377,9 @@ impl Store {
         for report in session.image_reports {
             entries.push(("imageReport", report));
         }
+        for report in session.recovery_runs {
+            entries.push(("recoveryRun", report));
+        }
         if let Some(original) = session.original_import {
             entries.push(("import-source", Value::String(original)));
         }
@@ -382,6 +399,34 @@ impl Store {
 mod tests {
     use super::*;
     #[cfg(unix)]
+    #[test]
+    fn recovery_run_updates_survive_restart_without_duplicating_partial_reports() {
+        let root = std::env::temp_dir().join(crate::model::unique_id("recovery-store"));
+        let store = Store::open(&root).unwrap();
+        let id = store.current_id().unwrap();
+        store
+            .append(
+                "recoveryRun",
+                &serde_json::json!({"id":"check-1","state":"running","steps":[]}),
+            )
+            .unwrap();
+        store.append("recoveryRun",&serde_json::json!({"id":"check-1","state":"stopped","unknownFuture":"18446744073709551615","steps":[{"state":"failed","evidence":{"ioReturn":"0xe00002c7"}}]})).unwrap();
+        drop(store);
+        let store = Store::open(&root).unwrap();
+        let report = store.load(&id).unwrap();
+        assert_eq!(report.recovery_runs.len(), 1);
+        assert_eq!(report.recovery_runs[0]["state"], "stopped");
+        assert_eq!(
+            report.recovery_runs[0]["unknownFuture"],
+            "18446744073709551615"
+        );
+        assert_eq!(
+            report.recovery_runs[0]["steps"][0]["evidence"]["ioReturn"],
+            "0xe00002c7"
+        );
+        drop(store);
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn closing_store_releases_claim_with_an_inherited_descriptor() {
         let root = std::env::temp_dir().join(format!(

@@ -17,11 +17,13 @@ export function UnavailableMediaView({
   refresh,
   ports,
   disabled,
+  recover,
 }: {
   item: UnavailableMedia;
   refresh: () => void;
   ports: () => void;
   disabled: boolean;
+  recover?: () => void;
 }) {
   const usb = getField(item.fields, "usb");
   const media = getField(item.fields, "media");
@@ -164,6 +166,19 @@ export function UnavailableMediaView({
         </section>
       )}
       <div className="unavailable-actions">
+        {recover && (
+          <button
+            className="recovery-start-button"
+            onClick={recover}
+            disabled={disabled}
+          >
+            <Icon name="shield" size={23} />
+            <span>
+              Start recovery<small>Check access & try enabled routes</small>
+            </span>
+            <Icon name="arrow" />
+          </button>
+        )}
         <button
           className="button primary"
           onClick={refresh}

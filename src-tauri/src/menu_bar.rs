@@ -23,6 +23,10 @@ pub struct Snapshot {
 #[derive(Default)]
 pub struct Cache(Mutex<Snapshot>);
 
+pub fn latest_discovery(app: &tauri::AppHandle) -> Option<Discovery> {
+    app.state::<Cache>().0.lock().ok()?.discovery.clone()
+}
+
 pub fn discovered(app: &tauri::AppHandle, value: &Discovery) {
     if let Ok(mut cached) = app.state::<Cache>().0.lock() {
         cached.discovery = Some(value.clone());
@@ -61,6 +65,9 @@ fn changed(_app: &tauri::AppHandle) {
 #[cfg(all(target_os = "macos", feature = "macos-menu-bar"))]
 fn current_activity(app: &tauri::AppHandle) -> Option<String> {
     let state = app.state::<Runtime>();
+    if state.recovery.is_active() {
+        return Some("Recovery checks in progress".into());
+    }
     state
         .acquisition
         .active_id()

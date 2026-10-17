@@ -39,8 +39,23 @@ static void json_string(const char *s) {
     }
     fputc('"',stdout);
 }
+#include "mac_recovery_helper.hpp"
+
 static int failure() {tsk_error_print(stderr);return 1;}
 int main(int argc,char **argv) {
+#ifdef __APPLE__
+    if(argc>1 && (!strcmp(argv[1],"--mac-usb-status")||!strcmp(argv[1],"--mac-usb-reconnect")||!strcmp(argv[1],"--mac-scsi-check")||!strcmp(argv[1],"--mac-usb-interface-check")||!strcmp(argv[1],"--mac-port-probe"))) return mac_recovery_main(argc,argv);
+#endif
+    if(argc==4 && !strcmp(argv[1],"--read-check")) {
+        uint64_t descriptor,length;
+        if(!number(argv[2],descriptor)||descriptor>INT_MAX||!number(argv[3],length)||!length||length>65536)return 2;
+        int fd=static_cast<int>(descriptor);struct stat status{};
+        if(fstat(fd,&status)||(fcntl(fd,F_GETFL)&O_ACCMODE)!=O_RDONLY||!(S_ISREG(status.st_mode)||S_ISBLK(status.st_mode)||S_ISCHR(status.st_mode)))return 2;
+        unsigned char bytes[65536];ssize_t n;do{n=pread(fd,bytes,length,0);}while(n<0&&errno==EINTR);
+        int code=n<0?errno:0;
+        printf("{\"requestedBytes\":\"%" PRIu64 "\",\"readBytes\":\"%zd\",\"offsetBytes\":\"0\",\"errno\":%d,\"error\":",length,n<0?0:n,code);json_string(code?strerror(code):"");puts("}");
+        return n==static_cast<ssize_t>(length)?0:3;
+    }
     if (argc==2 && !strcmp(argv[1],"--version")) {printf("DRC image adapter / The Sleuth Kit %s\n",tsk_version_get_str());return 0;}
     if (argc!=8) {fprintf(stderr,"Expected action, descriptor, sector bytes, sector offset, filesystem, entry filter and metadata address.\n");return 2;}
     if (strcmp(tsk_version_get_str(),TSK_VERSION_STR)) {fprintf(stderr,"TSK runtime version differs from the adapter's headers. Rebuild the adapter.\n");return 2;}

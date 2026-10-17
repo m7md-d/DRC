@@ -17,6 +17,7 @@ import type {
   AcquisitionJob,
   Json,
   ExtractionJob,
+  RecoveryRun, RecoveryOptions,
 } from "./types";
 import { bridge, native, subscribe } from "./bridge";
 import {
@@ -46,6 +47,7 @@ import { Select } from "./Select";
 import { UnavailableMediaView, observationLabel } from "./UnavailableMediaView";
 import { listen } from "@tauri-apps/api/event";
 import { version } from "../package.json";
+import { RecoveryPanel } from "./RecoveryPanel";
 
 const tabs: { key: Tab; label: string; icon: IconName }[] = [
   { key: "device", label: "Device", icon: "drive" },
@@ -58,6 +60,10 @@ const tabs: { key: Tab; label: string; icon: IconName }[] = [
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+function savedRecovery(run?:RecoveryRun):RecoveryRun|null {
+  if(!run)return null;
+  return run.state==="running"?{...run,state:"interrupted",source:null,steps:run.steps.map(s=>s.state==="running"?{...s,state:"not-run" as const,detail:"This saved check has no completion record."}:s),issue:{code:"INCOMPLETE_SAVED_RUN",title:"No completion was recorded",detail:"The saved run ended while a check was active. Its result is unknown; it is not reported as successful.",scope:"saved-report",evidence:null}}:run;
 }
 function Fact({
   label,
@@ -431,6 +437,13 @@ export function App() {
   const archivedRef = useRef(false);
   const [sessionOpen, setSessionOpen] = useState(false);
   const [acquisitionOpen, setAcquisitionOpen] = useState(false);
+  const [recoveryOpen,setRecoveryOpen]=useState(false);
+  const [recoveryRun,setRecoveryRun]=useState<RecoveryRun|null>(null);
+  const [recoveryRuns,setRecoveryRuns]=useState<RecoveryRun[]>([]);
+  const [recoveryRunning,setRecoveryRunning]=useState(false);
+  const [recoveryStopping,setRecoveryStopping]=useState<string|null>(null);
+  const [recoverySource,setRecoverySource]=useState<Device|undefined>(undefined);
+  const closeRecovery=useCallback(()=>setRecoveryOpen(false),[]);
   const [imageOpen, setImageOpen] = useState(false);
   const [imageReports, setImageReports] = useState<Json[]>([]);
   const [extractions, setExtractions] = useState<ExtractionJob[]>([]);
@@ -523,6 +536,11 @@ export function App() {
     }
   }, []);
 
+  const updateRecovery=useCallback((incoming:RecoveryRun)=>{
+    setRecoveryRun(current=>current?.id===incoming.id&&((current.updatedAt>incoming.updatedAt)||(current.state!=="running"&&incoming.state==="running"))?current:incoming);
+    setRecoveryRuns(items=>[...items.filter(r=>r.id!==incoming.id),incoming]);
+  },[]);
+
   const updateExtraction = useCallback((incoming: ExtractionJob) => {
     const previous = extractionRef.current.find((j) => j.id === incoming.id);
     const stale =
@@ -610,6 +628,8 @@ export function App() {
           setOriginalImport(saved.originalImport);
           setImageReports(saved.imageReports ?? []);
           setHostEvidence(saved.hostEvidence ?? []);
+          setRecoveryRuns(saved.recoveryRuns??[]);
+          setRecoveryRun(savedRecovery(saved.recoveryRuns?.at(-1)));
           setRecords(saved.commandRecords);
           setEvents(saved.connectionEvents);
           setSmart(saved.smartReports);
@@ -621,6 +641,7 @@ export function App() {
           setExtractions(extractionRef.current);
         }
         const stop = await subscribe({
+          recovery: incoming=>{if(active&&!archivedRef.current)updateRecovery(incoming);},
           discovery: (next) => {
             if (!active || archivedRef.current || (inventoryRef.current?.observedAt ?? 0) > next.observedAt) return;
             const previous = inventoryRef.current?.devices.find(d => d.id === selectionRef.current);
@@ -699,7 +720,16 @@ export function App() {
       if (eventRefresh.current) clearTimeout(eventRefresh.current);
       if (native) void bridge.stopWatch();
     };
-  }, [refresh, updateJob]);
+  }, [refresh, updateJob, updateRecovery]);
+
+  useEffect(()=>{if(!native)return;let disposed=false;let stop:(()=>void)|undefined;void listen<string>("recovery-stopping",event=>setRecoveryStopping(event.payload)).then(fn=>{if(disposed)fn();else stop=fn;});return()=>{disposed=true;stop?.();};},[]);
+
+  async function startRecovery(key:string,options:RecoveryOptions){
+    if(busyRef.current||acquiringRef.current||extractingRef.current||archivedRef.current)throw new Error("Finish the current operation or return to the live session first.");
+    busyRef.current=true;setRecoveryRunning(true);setRecoveryStopping(null);setRecoveryRun(null);setBusy("Running recovery checks");
+    try{updateRecovery(await bridge.recoveryChecks(key,options));}finally{busyRef.current=false;setRecoveryRunning(false);setBusy(null);if(pendingRefresh.current)void refreshRef.current();}
+  }
+  function continueRecovery(source:Device){setRecoverySource(source);setRecoveryOpen(false);setAcquisitionOpen(true);}
 
   useEffect(() => {
     if (!notice) return;
@@ -833,6 +863,7 @@ export function App() {
           originalImport,
           imageReports,
           hostEvidence,
+          recoveryRuns,
           snapshot,
           smartReports: smart,
           connectionReport: connection,
@@ -852,6 +883,8 @@ export function App() {
     setOriginalImport(saved.originalImport);
     setImageReports(saved.imageReports ?? []);
           setHostEvidence(saved.hostEvidence ?? []);
+    setRecoveryRuns(saved.recoveryRuns??[]);
+    setRecoveryRun(savedRecovery(saved.recoveryRuns?.at(-1)));
     setSnapshot(saved.snapshot);
     setRecords(saved.commandRecords);
     setEvents(saved.connectionEvents);
@@ -886,7 +919,7 @@ export function App() {
     await refresh();
   }
   const closeSessions = useCallback(() => setSessionOpen(false), []);
-  const closeAcquisition = useCallback(() => setAcquisitionOpen(false), []);
+  const closeAcquisition = useCallback(() => {setAcquisitionOpen(false);setRecoverySource(undefined);}, []);
 
   const visibleDevices = (snapshot?.devices ?? []).filter((item) =>
     `${item.id} ${item.name} ${item.protocol ?? ""}`
@@ -922,6 +955,7 @@ export function App() {
           <span className="version">{version}</span>
         </div>
         <div className="header-actions">
+          <button className="button primary" disabled={!native||!!busy&&!recoveryRunning} onClick={()=>setRecoveryOpen(true)}><Icon name={recoveryRunning?"refresh":"shield"} className={recoveryRunning?"spin":""}/>Recovery</button>
           <div className="mode-switch" aria-label="Workspace experience"><button aria-pressed={experience === "easy"} onClick={() => changeExperience("easy")}>Easy</button><button aria-pressed={experience === "professional"} onClick={() => changeExperience("professional")}>Professional</button></div>
           <button className="button" onClick={() => setReferenceOpen(true)}><Icon name="file" />Reference</button>
           <button className="button" data-hint="Open the visual USB, hub and enclosure hierarchy. Collects host metadata only when no report is saved." onClick={() => { setEasyReading("connection"); if (!connection && !archived) void runConnection(); }}><Icon name="hub"/>Port map</button>
@@ -1133,7 +1167,7 @@ export function App() {
             </div>
           ))}
 
-          {observedSelection ? <UnavailableMediaView item={observedSelection} refresh={() => void refresh()} ports={() => { setEasyReading("connection"); void runConnection(); }} disabled={!!busy || !native || archived}/> : experience === "easy" ? <EasyWorkspace device={device} smart={device ? smart[device.identityKey] : undefined} jobs={jobs} tools={tools} disabled={!!busy || !native || archived} inspect={() => { setEasyReading("smart"); void runSmart(); }} connections={() => { setEasyReading("connection"); void runConnection(); }} acquire={() => setAcquisitionOpen(true)} images={() => setImageOpen(true)} details={() => { changeExperience("professional"); setTab("device"); }} reference={() => setReferenceOpen(true)} /> : device ? (
+          {observedSelection ? <UnavailableMediaView recover={()=>setRecoveryOpen(true)} item={observedSelection} refresh={() => void refresh()} ports={() => { setEasyReading("connection"); void runConnection(); }} disabled={!!busy || !native || archived}/> : experience === "easy" ? <EasyWorkspace device={device} smart={device ? smart[device.identityKey] : undefined} jobs={jobs} tools={tools} disabled={!!busy || !native || archived} inspect={() => { setEasyReading("smart"); void runSmart(); }} connections={() => { setEasyReading("connection"); void runConnection(); }} acquire={() => setAcquisitionOpen(true)} images={() => setImageOpen(true)} details={() => { changeExperience("professional"); setTab("device"); }} reference={() => setReferenceOpen(true)} /> : device ? (
             <>
               <div className="device-heading">
                 <div className="device-heading-icon">
@@ -1481,7 +1515,8 @@ export function App() {
       )}
       {acquisitionOpen && (
         <AcquisitionPanel
-          device={device}
+          device={recoverySource??device}
+          preferPhysical={!!recoverySource}
           simple={experience === "easy"}
           platform={snapshot?.platform ?? (tools.some(t=>t.key === "lsblk") ? "Linux" : "macOS")}
           jobs={jobs}
@@ -1490,6 +1525,7 @@ export function App() {
           started={updateJob}
         />
       )}
+      {recoveryOpen&&<RecoveryPanel run={recoveryRun} running={recoveryRunning} stopping={recoveryStopping} historical={archived} initialKey={observedSelection?`observation:${observedSelection.id}`:device?.internal===false?`device:${device.token}`:null} platform={snapshot?.platform??"macOS"} close={closeRecovery} start={startRecovery} stop={()=>{setRecoveryStopping("Cancellation requested. Waiting for the current command to exit; no later check will start.");void bridge.stopRecoveryChecks();}} continueToImage={continueRecovery} showCommand={id=>{setSelectedRecord(id);setTerminalMode("commands");setTerminalCompact(false);setRecoveryOpen(false);}}/>}
       {evidenceOpen && <HostEvidence kernelAllowed={!archived} collectReport={collectHostEvidence} reports={hostEvidence} disabled={!!busy || archived} close={closeEvidence} onReport={report=>setHostEvidence(items=>[...items,report as unknown as Json])}/>}
       {referenceOpen && <CheatSheet platform={snapshot?.platform ?? (tools.some(t=>t.key === "lsblk") ? "Linux" : "macOS")} close={closeReference} copy={text=>navigator.clipboard.writeText(text)} />}
       {easyReading && <Modal title={easyReading === "smart" ? "Reported SMART / NVMe readings" : "Port map"} subtitle="EXPLICIT QUERY / ORIGINAL FIELDS" close={closeEasyReading} wide className="readings-modal">{easyReading === "smart" && device ? <SmartView device={device} result={smart[device.identityKey]} busy={!!busy || archived} run={(deviceType) => void runSmart(deviceType)} /> : <ConnectionView platform={snapshot?.platform ?? (tools.some(t=>t.key === "lsblk") ? "Linux" : "macOS")} result={connection} busy={!!busy || archived} run={() => void runConnection()} />}</Modal>}

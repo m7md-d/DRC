@@ -33,6 +33,7 @@ const sourceLabel = (source: AcquisitionJob["source"], platform = "macOS") =>
 export function AcquisitionPanel({
   device,
   simple = false,
+  preferPhysical = false,
   platform = "macOS",
   jobs,
   busy,
@@ -41,6 +42,7 @@ export function AcquisitionPanel({
 }: {
   device?: Device;
   simple?: boolean;
+  preferPhysical?: boolean;
   platform?: string;
   jobs: AcquisitionJob[];
   busy: boolean;
@@ -48,10 +50,10 @@ export function AcquisitionPanel({
   started: (job: AcquisitionJob) => void;
 }) {
   const mounted = useRef(true);
-  const [kind, setKind] = useState<"image" | "physical">(simple && canAcquireDevice(device) ? "physical" : "image");
+  const [kind, setKind] = useState<"image" | "physical">((simple || preferPhysical) && canAcquireDevice(device) ? "physical" : "image");
   const [image, setImage] = useState("");
   const [destination, setDestination] = useState("");
-  const [settings, setSettings] = useState<AcquisitionSettings>({ ...defaults, sectorSize: simple && canAcquireDevice(device) ? Number((device.info as Record<string, Json>)?.DeviceBlockSize ?? (device.info as Record<string, Json>)?.["log-sec"] ?? 512) : 512 });
+  const [settings, setSettings] = useState<AcquisitionSettings>({ ...defaults, sectorSize: (simple || preferPhysical) && canAcquireDevice(device) ? Number((device.info as Record<string, Json>)?.DeviceBlockSize ?? (device.info as Record<string, Json>)?.["log-sec"] ?? 512) : 512 });
   const [plan, setPlan] = useState<AcquisitionPlan | null>(null);
   const planRef = useRef<AcquisitionPlan | null>(null);
   const [confirmation, setConfirmation] = useState("");

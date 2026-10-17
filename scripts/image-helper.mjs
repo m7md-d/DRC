@@ -25,6 +25,7 @@ export async function buildImageHelper() {
   const stamp = `${output}.build-key`;
   const key = createHash("sha256")
     .update(readFileSync(source))
+    .update(readFileSync(resolve(root, "src/mac_recovery_helper.hpp")))
     .update(readFileSync(`${include}/tsk/base/tsk_base.h`))
     .update(linux ? readFileSync(`${include}/tsk/libtsk.h`) : realpathSync("/opt/homebrew/lib/libtsk.23.dylib"))
     .update(target)
@@ -47,6 +48,7 @@ export async function buildImageHelper() {
         `-I${include}`,
         source,
         ...(linux ? ["-Wl,-rpath,$ORIGIN/../lib/drc"] : ["-L/opt/homebrew/lib"]),
+        ...(linux ? [] : ["-framework", "IOKit", "-framework", "CoreFoundation"]),
         "-ltsk",
         "-o",
         output,
