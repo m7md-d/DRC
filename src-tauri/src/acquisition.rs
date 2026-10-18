@@ -1,6 +1,6 @@
 use crate::{
     model::{now_ms, CommandRecord, Device},
-    mount_guard::MountGuard,
+    mount_guard::{MountGuard, SourcePresence},
     policy::{self, FileIdentity},
     rates::{self, ProgressReport, ProgressSample, RateReport},
     store::Store,
@@ -84,6 +84,14 @@ fn zero_bytes() -> String {
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AttemptSource {
+    pub attempt: u32,
+    pub opened_at: u64,
+    pub source: Source,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Job {
     pub id: String,
     pub session_id: String,
@@ -111,6 +119,8 @@ pub struct Job {
     pub rate_reports: Vec<RateReport>,
     #[serde(default)]
     pub progress_reports: Vec<ProgressReport>,
+    #[serde(default)]
+    pub attempt_sources: Vec<AttemptSource>,
 }
 
 #[derive(Clone, Serialize)]
@@ -127,6 +137,55 @@ pub struct Plan {
     pub arguments: Vec<String>,
     pub confirmation: String,
     pub resume_job: Option<String>,
+    pub previous_source: Option<Source>,
+}
+
+fn resume_source_review(source: &Source, previous: &Job) -> Result<Option<Source>, String> {
+    match (source, &previous.source) {
+        (Source::Physical { device: current }, Source::Physical { device: original }) => {
+            if current.size_bytes != original.size_bytes
+                || current.size_bytes.as_deref() != Some(&previous.source_size)
+            {
+                return Err("The current source capacity differs from the saved acquisition. Resume refused.".into());
+            }
+            let block_size = |device: &Device| {
+                device
+                    .info
+                    .get("DeviceBlockSize")
+                    .or_else(|| device.info.get("log-sec"))
+                    .cloned()
+            };
+            if block_size(current).is_none() || block_size(current) != block_size(original) {
+                return Err(
+                    "The current logical sector size differs or is unavailable. Resume refused."
+                        .into(),
+                );
+            }
+            for field in ["DiskUUID", "SerialNumber", "serial", "wwn", "WWN"] {
+                let value = |device: &Device| {
+                    crate::model::string_field(&device.info, field)
+                        .filter(|value| !value.trim().is_empty())
+                };
+                if let (Some(old), Some(new)) = (value(original), value(current)) {
+                    if old != new {
+                        return Err(format!("The source's reported {field} differs from the saved source. Resume refused."));
+                    }
+                }
+            }
+            Ok((current.identity_key != original.identity_key).then(|| previous.source.clone()))
+        }
+        (
+            Source::Image {
+                identity: current, ..
+            },
+            Source::Image {
+                identity: original, ..
+            },
+        ) if current == original => Ok(None),
+        _ => {
+            Err("The current source does not match the saved acquisition type or identity.".into())
+        }
+    }
 }
 
 struct Prepared {
@@ -409,9 +468,20 @@ impl Manager {
                 .to_string_lossy()
                 .into_owned()
         });
-        let confirmation = match &source {
-            Source::Image { .. } => "ACQUIRE IMAGE".into(),
-            Source::Physical { device } => format!("ACQUIRE {}", device.id),
+        let previous_source = resume
+            .map(|job| resume_source_review(&source, job))
+            .transpose()?
+            .flatten();
+        let confirmation = match (&source, &previous_source) {
+            (Source::Physical { device: current }, Some(Source::Physical { device: original })) => {
+                if original.id == current.id {
+                    format!("CONFIRM RESUME {}", current.id)
+                } else {
+                    format!("RESUME {} AS {}", original.id, current.id)
+                }
+            }
+            (Source::Image { .. }, _) => "ACQUIRE IMAGE".into(),
+            (Source::Physical { device }, _) => format!("ACQUIRE {}", device.id),
         };
         let plan = Plan {
             ticket: ticket.clone(),
@@ -437,6 +507,7 @@ impl Manager {
             ),
             confirmation,
             resume_job: resume.map(|j| j.id.clone()),
+            previous_source,
         };
         let mut prepared = self.prepared.lock().map_err(|e| e.to_string())?;
         prepared.clear(); // one reviewable plan; a new plan releases the previous guard/handles
@@ -573,11 +644,17 @@ impl Manager {
                 latest_record: None,
                 rate_reports: Vec::new(),
                 progress_reports: Vec::new(),
+                attempt_sources: Vec::new(),
             };
             (job, directory)
         };
         let lock = open_lock(Path::new(&job.directory))?;
         job.attempts += 1;
+        job.attempt_sources.push(AttemptSource {
+            attempt: job.attempts,
+            opened_at: now_ms(),
+            source: prepared.plan.source.clone(),
+        });
         job.settings = prepared.plan.settings.clone();
         job.state = "running".into();
         job.updated_at = now_ms();
@@ -590,14 +667,17 @@ impl Manager {
         let manager = self.clone();
         let result = job.clone();
         std::thread::spawn(move || {
-            let _guard = prepared.guard;
+            let guard = prepared.guard;
             let lock = lock;
             let mut job = job;
             let record = run(
                 &mut job,
                 prepared.input,
                 directory,
-                &lock,
+                (
+                    &lock,
+                    guard.as_ref().map(|guard| guard as &dyn SourcePresence),
+                ),
                 stop,
                 &store,
                 &sink,
@@ -719,11 +799,12 @@ fn run(
     job: &mut Job,
     input: File,
     directory: File,
-    lock: &File,
+    protection: (&File, Option<&dyn SourcePresence>),
     stop: Arc<AtomicBool>,
     store: &Store,
     sink: &Sink,
 ) -> CommandRecord {
+    let (lock, guard) = protection;
     let started = Instant::now();
     let at = now_ms();
     let program = executable().unwrap_or_default();
@@ -841,6 +922,7 @@ fn run(
             let mut signalled = false;
             let mut last = Instant::now();
             let mut save_failure: Option<String> = None;
+            let mut source_failure: Option<String> = None;
             loop {
                 if stop.load(Ordering::SeqCst) && !signalled {
                     if unsafe { libc::kill(child.id() as i32, libc::SIGINT) } != 0 {
@@ -854,7 +936,11 @@ fn run(
                         .filter(|e| !e.is_empty())
                         .map(|e| format!("Log persistence failed: {}. ", e.join("; ")))
                         .unwrap_or_default();
-                    job.message=Some(format!("{reason}SIGINT requested. Waiting for ddrescue to save its mapfile and exit; kernel I/O can delay this."));
+                    let source_reason = source_failure
+                        .as_ref()
+                        .map(|error| format!("Source access changed: {error}. "))
+                        .unwrap_or_default();
+                    job.message=Some(format!("{source_reason}{reason}SIGINT requested. Waiting for ddrescue to save its mapfile and exit; kernel I/O can delay this."));
                     job.updated_at = now_ms();
                     sink(job.clone(), None);
                 }
@@ -865,6 +951,14 @@ fn run(
                     break;
                 }
                 if last.elapsed() >= Duration::from_secs(1) {
+                    if source_failure.is_none() {
+                        if let Some(guard) = guard {
+                            if let Err(error) = guard.check_source() {
+                                source_failure = Some(error);
+                                stop.store(true, Ordering::SeqCst);
+                            }
+                        }
+                    }
                     if update_artifacts(job) {
                         sample_progress(job, started.elapsed().as_millis() as u64);
                     }
@@ -883,6 +977,9 @@ fn run(
                 std::thread::sleep(Duration::from_millis(50));
             }
             let mut persistence_errors = Vec::new();
+            if source_failure.is_none() && record.exit_code != Some(0) {
+                source_failure = guard.and_then(|guard| guard.check_source().err());
+            }
             for (name, reader) in [("stdout", out), ("stderr", err)] {
                 match reader.join() {
                     Ok(Ok(())) => {}
@@ -933,9 +1030,9 @@ fn run(
             }
             job.exit_code = record.exit_code;
             let complete = completion_verified(job, fresh_artifacts);
-            job.state = if complete && record.exit_code == Some(0) {
+            job.state = if complete && record.exit_code == Some(0) && source_failure.is_none() {
                 "completed"
-            } else if signalled && job.map_digest.is_some() {
+            } else if (signalled || source_failure.is_some()) && job.map_digest.is_some() {
                 "paused"
             } else if record.exit_code == Some(0) && job.map.is_some() {
                 "incomplete"
@@ -946,7 +1043,7 @@ fn run(
             job.message = if job.state == "completed" {
                 Some("The mapfile marks every byte in the requested range as finished (+).".into())
             } else if job.state == "paused" {
-                Some("Stopped with a saved mapfile. Resume requires a new source/destination review.".into())
+                Some(source_failure.map(|error| format!("Source access changed: {error}. The image and saved mapfile were retained. Reconnect the source, refresh devices and review resume; finished map regions are not copied again.")).unwrap_or_else(|| "Stopped with a saved mapfile. Resume requires a new source/destination review.".into()))
             } else if job
                 .map
                 .as_ref()
@@ -959,12 +1056,18 @@ fn run(
         }
         Ok(())
     })();
+    update_record(&mut record, job);
     if let Err(error) = outcome {
         record.launch_error = Some(error.clone());
         job.state = "failed".into();
-        job.message = Some(error);
+        job.message = Some(match (record.exit_code, record.stderr.trim()) {
+            (Some(code), stderr) if !stderr.is_empty() => {
+                let stderr: String = stderr.chars().take(4096).collect();
+                format!("ddrescue exited with status {code}: {stderr}\n{error}")
+            }
+            _ => error,
+        });
     }
-    update_record(&mut record, job);
     update_rates(job, false);
     record.duration_ms = started.elapsed().as_millis() as u64;
     job.updated_at = now_ms();
@@ -1637,6 +1740,75 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
+    fn inherited_readonly_source_remains_readable_when_path_cannot_be_reopened() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(crate::model::unique_id("drc-pinned-permission"));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("generated.img");
+        let bytes: Vec<u8> = (0..1048576).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&path, &bytes).unwrap();
+        let (_, input, identity) = policy::existing_regular_source(&path).unwrap();
+        let source = Source::Image {
+            path: path.to_string_lossy().into_owned(),
+            identity,
+        };
+        let store = Arc::new(Store::open(&root.join("store")).unwrap());
+        let manager = Arc::new(Manager::default());
+        let mut config = settings();
+        config.length = Some(bytes.len().to_string());
+        let plan = manager
+            .prepare(
+                source,
+                input,
+                None,
+                &root,
+                config,
+                bytes.len() as u64,
+                None,
+                None,
+            )
+            .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o0)).unwrap();
+        if unsafe { libc::geteuid() } != 0 {
+            assert!(
+                File::open(&path).is_err(),
+                "The fixture must deny a new path open"
+            );
+        }
+        let job = manager
+            .start(
+                &plan.ticket,
+                &plan.confirmation,
+                store.clone(),
+                Arc::new(|_, _| {}),
+            )
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while manager.is_active() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(30));
+        }
+        assert!(!manager.is_active());
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let finished = store
+            .jobs::<Job>()
+            .unwrap()
+            .into_iter()
+            .find(|j| j.id == job.id)
+            .unwrap();
+        assert_eq!(finished.state, "completed", "{:?}", finished.message);
+        assert!(
+            std::fs::read(&finished.image_path).unwrap() == bytes,
+            "Image bytes differ"
+        );
+        assert!(
+            std::fs::read(&path).unwrap() == bytes,
+            "Source bytes changed"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
     fn real_ddrescue_stops_resumes_preserves_source_and_rejects_modified_artifacts() {
         // This integration check only creates ordinary files in a disposable temp
         // directory. It never enumerates, opens, reads or writes a physical disk.
@@ -1891,6 +2063,7 @@ mod tests {
             latest_record: None,
             rate_reports: vec![],
             progress_reports: vec![],
+            attempt_sources: vec![],
         };
         (root, job)
     }
@@ -1911,6 +2084,160 @@ mod tests {
         assert!(!update_artifacts(&mut job));
         assert_eq!(job.image_identity, Some(original));
         assert!(!completion_verified(&job, true));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    fn physical_fixture(id: &str, serial: &str) -> Source {
+        let info = serde_json::json!({"DeviceIdentifier":id,"DeviceTreePath":format!("test/{id}"),"MediaName":"Generated source fixture","TotalSize":"1024","DeviceBlockSize":"512","Internal":false,"WholeDisk":true,"SerialNumber":serial});
+        Source::Physical {
+            device: Box::new(Device {
+                id: id.into(),
+                token: format!("fixture:{id}"),
+                identity_key: crate::platform::identity_key(&info),
+                name: "Generated source fixture".into(),
+                size_bytes: Some("1024".into()),
+                internal: Some(false),
+                protocol: Some("USB".into()),
+                content: None,
+                partitions: vec![],
+                info,
+                layout: serde_json::json!({}),
+                info_error: None,
+                observed_at: now_ms(),
+                metadata_only: false,
+                protection_reason: None,
+            }),
+        }
+    }
+    #[test]
+    fn changed_source_node_requires_binding_review_and_conflicting_identity_is_rejected() {
+        let (root, mut job) = artifact_fixture(1024, "0 ? 1\n0 512 +\n512 512 ?\n");
+        job.source = physical_fixture("disk4", "fixture-serial");
+        job.state = "paused".into();
+        assert!(update_artifacts(&mut job));
+        let current = physical_fixture("disk9", "fixture-serial");
+        assert!(resume_source_review(&job.source, &job).unwrap().is_none());
+        assert!(resume_source_review(&current, &job).unwrap().is_some());
+        let manager = Arc::new(Manager::default());
+        let plan = manager
+            .prepare(
+                current.clone(),
+                policy::open_readonly(Path::new(&job.image_path)).unwrap(),
+                None,
+                &root,
+                job.settings.clone(),
+                1024,
+                Some(&job),
+                None,
+            )
+            .unwrap();
+        assert_eq!(plan.confirmation, "RESUME disk4 AS disk9");
+        assert!(plan.previous_source.is_some());
+        manager.cancel_plan(&plan.ticket);
+        assert!(
+            resume_source_review(&physical_fixture("disk9", "different-serial"), &job).is_err()
+        );
+        let Source::Physical { mut device } = current else {
+            unreachable!()
+        };
+        device.size_bytes = Some("2048".into());
+        assert!(resume_source_review(
+            &Source::Physical {
+                device: device.clone()
+            },
+            &job
+        )
+        .is_err());
+        device.size_bytes = Some("1024".into());
+        device.info["DeviceBlockSize"] = serde_json::json!("4096");
+        assert!(resume_source_review(&Source::Physical { device }, &job).is_err());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn observed_source_disappearance_saves_map_and_resumes_generated_bytes_exactly() {
+        struct LostSource;
+        impl SourcePresence for LostSource {
+            fn check_source(&self) -> Result<(), String> {
+                Err("Injected source disappearance: ENODEV".into())
+            }
+        }
+        // This witness uses ordinary generated files and a probe; no hardware
+        // is enumerated, disconnected, read or written.
+        let (root, mut job) = artifact_fixture(0, "0 ? 1\n0 1024 ?\n");
+        let bytes: Vec<u8> = (0u32..4 * 1024 * 1024).flat_map(u32::to_le_bytes).collect();
+        let source_path = root.join("source.img");
+        std::fs::write(&source_path, &bytes).unwrap();
+        job.source = Source::Image {
+            path: source_path.to_string_lossy().into_owned(),
+            identity: policy::path_identity(&source_path).unwrap(),
+        };
+        job.source_size = bytes.len().to_string();
+        job.settings.length = Some(bytes.len().to_string());
+        job.settings.max_read_rate = Some("1048576".into());
+        job.session_id = "generated-disconnect".into();
+        std::fs::remove_file(&job.map_path).unwrap();
+        let store = Arc::new(Store::open(&root.join("store")).unwrap());
+        let sink: Sink = Arc::new(|_, _| {});
+        let input = policy::open_readonly(&source_path).unwrap();
+        let directory = policy::open_readonly(&root).unwrap();
+        let lock = open_lock(&root).unwrap();
+        let record = run(
+            &mut job,
+            input,
+            directory,
+            (&lock, Some(&LostSource)),
+            Arc::new(AtomicBool::new(false)),
+            &store,
+            &sink,
+        );
+        assert_eq!(job.state, "paused", "{:?}", job.message);
+        assert!(job.message.as_ref().unwrap().contains("ENODEV"));
+        let rescued = job
+            .map
+            .as_ref()
+            .unwrap()
+            .rescued_bytes
+            .parse::<usize>()
+            .unwrap();
+        assert!(rescued > 0 && rescued < bytes.len());
+        assert!(job.map_digest.is_some());
+        job.latest_record = Some(record);
+        save_job(&store, &job).unwrap();
+        drop(lock);
+        let manager = Arc::new(Manager::default());
+        let mut settings = job.settings.clone();
+        settings.max_read_rate = None;
+        let plan = manager
+            .prepare(
+                job.source.clone(),
+                policy::open_readonly(&source_path).unwrap(),
+                None,
+                &root,
+                settings,
+                bytes.len() as u64,
+                Some(&job),
+                None,
+            )
+            .unwrap();
+        manager
+            .start(&plan.ticket, &plan.confirmation, store.clone(), sink)
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while manager.is_active() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(30));
+        }
+        assert!(!manager.is_active());
+        let completed = store
+            .jobs::<Job>()
+            .unwrap()
+            .into_iter()
+            .find(|next| next.id == job.id)
+            .unwrap();
+        assert_eq!(completed.state, "completed", "{:?}", completed.message);
+        assert_eq!(completed.attempts, 2);
+        assert_eq!(std::fs::read(&completed.image_path).unwrap(), bytes);
+        assert_eq!(std::fs::read(&source_path).unwrap(), bytes);
+        drop(store);
+        drop(manager);
         std::fs::remove_dir_all(root).unwrap();
     }
     #[test]

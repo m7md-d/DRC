@@ -272,17 +272,29 @@ impl Drop for UsbMountGuard {
 }
 
 pub struct MountGuard {
-    #[cfg(target_os = "macos")]
     id: String,
+    #[cfg(target_os = "macos")]
+    binding: std::sync::Mutex<Option<crate::mac_source::Binding>>,
     #[cfg(target_os = "linux")]
     input: std::fs::File,
+}
+pub(crate) trait SourcePresence {
+    fn check_source(&self) -> Result<(), String>;
+}
+impl SourcePresence for MountGuard {
+    fn check_source(&self) -> Result<(), String> {
+        MountGuard::check_source(self)
+    }
 }
 impl MountGuard {
     pub fn acquire(id: &str) -> Result<Self, String> {
         #[cfg(target_os = "macos")]
         {
             mac::add(id)?;
-            Ok(Self { id: id.into() })
+            Ok(Self {
+                id: id.into(),
+                binding: std::sync::Mutex::new(None),
+            })
         }
         #[cfg(target_os = "linux")]
         {
@@ -304,7 +316,10 @@ impl MountGuard {
                 return Err("Source is not a block device".into());
             }
             validate_readonly_node(&input, id)?;
-            Ok(Self { input })
+            Ok(Self {
+                id: id.into(),
+                input,
+            })
         }
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {
@@ -312,18 +327,40 @@ impl MountGuard {
             Err("Source mount protection is not implemented on this host.".into())
         }
     }
-    pub fn open_source(&self) -> Result<std::fs::File, String> {
+    pub fn open_source(
+        &self,
+        emit: &mut dyn FnMut(crate::model::CommandRecord),
+    ) -> Result<std::fs::File, String> {
         #[cfg(target_os = "macos")]
         {
-            crate::policy::open_readonly(std::path::Path::new(&format!("/dev/r{}", self.id)))
+            let (file, binding) = crate::mac_source::open(&self.id, emit)?;
+            *self.binding.lock().map_err(|e| e.to_string())? = Some(binding);
+            Ok(file)
         }
         #[cfg(target_os = "linux")]
         {
+            let _ = emit;
             self.input.try_clone().map_err(|e| e.to_string())
         }
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {
+            let _ = emit;
             Err("Physical source access unavailable".into())
+        }
+    }
+    pub fn check_source(&self) -> Result<(), String> {
+        #[cfg(target_os = "macos")]
+        {
+            let binding = self.binding.lock().map_err(|e| e.to_string())?;
+            crate::mac_source::check_presence(binding.as_ref().ok_or("No source binding is held.")?)
+        }
+        #[cfg(target_os = "linux")]
+        {
+            validate_readonly_node(&self.input, &self.id)
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        {
+            Err("Source presence checks are unavailable on this host.".into())
         }
     }
 }

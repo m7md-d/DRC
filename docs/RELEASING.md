@@ -6,9 +6,17 @@
 2. On macOS, preview: `npm run release -- patch --dry-run`.
 3. Release: `npm run release -- patch --publish`. `minor`, `major` or an explicit `X.Y.Z` also work.
 
-The release command requires a clean checkout. It runs tests, builds the app, captures screenshots, regenerates the README, creates a release commit and annotated tag, and pushes the branch/tag atomically. GitHub builds macOS and Debian/Fedora packages, verifies the tag version and publishes after the required jobs pass. A failed build does not publish a release.
+The release command requires a clean checkout. It runs tests, builds the app, captures screenshots and regenerates the README. With `--publish`, it creates a version commit and pushes the branch. GitHub creates the annotated tag after its checks and package builds pass.
 
-Omit `--publish` for local preparation. To publish that prepared version after review, commit the generated files, create the matching annotated `vX.Y.Z` tag, then push branch and tag together. If the script's final push fails, it prints the exact retry command; it retains the local commit and tag.
+Omit `--publish` for local preparation. To publish that prepared version after review, commit the generated files and push the default branch. If the script's push fails, it retains the local commit and prints the retry command.
+
+## GitHub Actions
+
+`Checks` runs on ordinary branch pushes, pull requests and manual dispatch. It checks metadata, frontend, release scripts, native macOS code and Linux code.
+
+After successful `Checks` on the default branch, `Desktop packages` checks the source version at that exact commit. A new version builds macOS arm64 and Debian/Fedora amd64 and arm64 packages, verifies installation and Linux recovery evidence, then creates `vX.Y.Z` and publishes the release assets. A failed job prevents publication. An already published version produces a “No new release” summary without rebuilding packages.
+
+To retry, run `Desktop packages` manually from the default branch after `Checks` succeeds for that commit. The manual run uses the same release rules. An unpublished tag can be retried only at its original commit; the workflow never moves a tag or overwrites a published release. Increase the source version for changed code after tagging.
 
 ## Screenshots
 

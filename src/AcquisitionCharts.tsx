@@ -3,6 +3,7 @@ import { FieldTable } from "./FieldTable";
 import { Plot } from "./Plot";
 import { Select } from "./Select";
 import { observedGrowth } from "./chartMath";
+import { sampleDuration } from "./acquisitionTiming";
 import type { AcquisitionJob, Json } from "./types";
 
 const names: Record<string, string> = {
@@ -101,6 +102,15 @@ export function AcquisitionCharts({ job }: { job: AcquisitionJob }) {
                 : "GNU ddrescue --log-rates · original tool measurements"
             }
             points={points}
+            live={job.state === "running" && selectedAttempt === job.attempts}
+            intervalMs={
+              points.length >= 2
+                ? sampleDuration(
+                    Number(points.at(-2)!.x) * (fromMap ? 1 : 1000),
+                    Number(points.at(-1)!.x) * (fromMap ? 1 : 1000),
+                  )
+                : 0
+            }
             series={
               metric === "rate"
                 ? [
@@ -150,8 +160,7 @@ export function AcquisitionCharts({ job }: { job: AcquisitionJob }) {
           {report && (
             <details className="measurement-source">
               <summary>
-                Samples and original rate log · {report.samples.length}{" "}
-                rows
+                Samples and original rate log · {report.samples.length} rows
               </summary>
               <code className="artifact-path">{report.path}</code>
               <FieldTable

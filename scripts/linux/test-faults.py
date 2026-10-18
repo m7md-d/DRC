@@ -4,6 +4,11 @@ root = pathlib.Path(__file__).resolve().parents[2]
 arch = "aarch64" if os.uname().machine == "aarch64" else "x86_64"
 program = root / "src-tauri/binaries" / f"drc-ddrescue-{arch}-unknown-linux-gnu"
 assert subprocess.check_output([program, "--version"]).splitlines()[0] == b"GNU ddrescue 1.30"
+def unprivileged_fixture_user():
+    os.setgroups([])
+    os.setgid(65534)
+    os.setuid(65534)
+subprocess.run(["python3", str(root / "scripts/tests/inherited-source.py"), str(program)], check=True, preexec_fn=unprivileged_fixture_user if os.geteuid() == 0 else None)
 results = []
 
 def capture(child):

@@ -26,6 +26,8 @@
           "/usr/lib/drc/": "../.cache/linux-libs/",
           "/usr/share/doc/drc/ddrescue-1.30.tar.lz": "../.cache/ddrescue-1.30.tar.lz",
           "/usr/share/doc/drc/DDRESCUE-COPYING": "../.cache/ddrescue-1.30/COPYING",
+          "/usr/share/doc/drc/ddrescue-readonly-fd.patch": "../scripts/ddrescue-readonly-fd.patch",
+          "/usr/share/doc/drc/build-ddrescue.sh": "../scripts/linux/build-ddrescue.sh",
           "/usr/share/doc/drc/LINUX-INSTALL.md": "../docs/LINUX-INSTALL.md"
         },
         "release": "1"

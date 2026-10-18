@@ -6,6 +6,7 @@ import {
   realpath,
   readFile,
   writeFile,
+  cp,
 } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -14,6 +15,17 @@ const exec = promisify(execFile);
 // Resolve the adapter's exact SDK dependency graph. No host library is modified.
 export async function packageImageHelper(bundle) {
   if (process.platform !== "darwin") return;
+  await cp(
+    new URL("../.cache/ddrescue-macos-source", import.meta.url),
+    join(bundle, "Contents/Resources/GNUddrescue"),
+    { recursive: true },
+  );
+  const copyTool = join(bundle, "Contents/MacOS/drc-ddrescue");
+  const copyVersion = await exec(copyTool, ["--version"]);
+  if (!copyVersion.stdout.includes("DRC inherited-readonly-input v2"))
+    throw new Error(
+      "The packaged copy tool lacks read-only descriptor support.",
+    );
   const helper = join(bundle, "Contents/MacOS/drc-tsk");
   if (!existsSync(helper))
     throw new Error("The packaged image reader is absent.");

@@ -5,7 +5,10 @@
 - Native macOS menu bar monitor with continuous history and a unified port tree.
 - Fixed fullscreen toolbar spacing, including right-side macOS window controls.
 - Added Fedora RPM builds and merged Debian, Ubuntu and Mint command profiles.
-- Added version synchronization, native README screenshots and tagged-release automation.
+- Added a read-only macOS source broker and bundled GNU ddrescue; writable input handles reopen read-only before copying.
+- Added animated copy progress, remaining bytes, elapsed time, completion estimates and source selection for saved-copy resume.
+- Version changes on the default branch build and publish releases after normal checks and package validation pass. Manual retries report why a version is skipped.
+- Added version synchronization and native README screenshots.
 - Updated the app icon, README header and name: Disk Resource Console.
 
 macOS archives are ad-hoc signed, not notarized.

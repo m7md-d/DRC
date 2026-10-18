@@ -1,0 +1,47 @@
+name: Checks
+on:
+  pull_request:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  metadata:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      - run: npm run version:check && npm run readme:check && npm run copy:check && npm run public:check
+      - run: npm run release:test && npm test && npm run build
+  linux:
+    needs: metadata
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        dockerfile: [scripts/linux/Dockerfile, scripts/linux/Dockerfile.fedora]
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build --file ${{ matrix.dockerfile }} --target checks .
+  macos:
+    needs: metadata
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@stable
+      - run: brew install smartmontools sleuthkit
+      - run: npm ci
+      - run: npm run native:test && npm run rust:test && npm run rust:check
+      - run: python3 scripts/tests/inherited-source.py src-tauri/binaries/drc-ddrescue-aarch64-apple-darwin

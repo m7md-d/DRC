@@ -1,0 +1,91 @@
+--- a/main.cc
++++ b/main.cc
+@@ -29,6 +29,7 @@
+ #include <cstring>
+ #include <ctime>
+ #include <fcntl.h>
++#include <limits.h>
+ #include <stdint.h>		// SIZE_MAX
+ #include <unistd.h>
+ #include <sys/stat.h>
+@@ -67,6 +68,53 @@
+ 
+ enum Mode { m_none, m_command, m_fill, m_generate };
+ const mode_t outmode = S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH;
++
++
++// DRC modification (18 October 2026): preserve an inherited O_RDONLY
++// input capability on macOS. Opening /dev/fd/N rechecks device permissions;
++// dup uses the already-authorized descriptor without reopening the device.
++int drc_open_readonly_input( const char * const name, const int flags )
++  {
++  const char prefix[] = "/dev/fd/";
++  if( std::strncmp( name, prefix, sizeof prefix - 1 ) != 0 )
++    return open( name, flags );
++  const char * const number = name + sizeof prefix - 1;
++  if( !*number ) { errno = EINVAL; return -1; }
++  int fd = 0;
++  for( const char * p = number; *p; ++p )
++    {
++    if( *p < '0' || *p > '9' || fd > ( INT_MAX - ( *p - '0' ) ) / 10 )
++      { errno = EINVAL; return -1; }
++    fd = fd * 10 + ( *p - '0' );
++    }
++  if( flags != ( O_RDONLY | O_BINARY ) )
++    { errno = ENOTSUP; return -1; }
++  const int inherited_flags = fcntl( fd, F_GETFL );
++  if( inherited_flags < 0 ) return -1;
++  if( ( inherited_flags & O_ACCMODE ) == O_RDONLY ) return dup( fd );
++  // Access modes cannot be changed with F_SETFL. Reopen read-only, bind it
++  // to the inherited object's identity, and drop the writable capability.
++  struct stat before, after;
++  if( fstat( fd, &before ) != 0 ) return -1;
++#ifdef __APPLE__
++  char source_path[PATH_MAX];
++  if( fcntl( fd, F_GETPATH, source_path ) < 0 ) return -1;
++  const int readonly = open( source_path, O_RDONLY | O_NOFOLLOW | O_BINARY );
++#else
++  const int readonly = open( name, O_RDONLY | O_BINARY );
++#endif
++  if( readonly < 0 ) return -1;
++  const int readonly_flags = fcntl( readonly, F_GETFL );
++  if( fstat( readonly, &after ) != 0 || readonly_flags < 0 )
++    { const int saved_errno = errno; close( readonly ); errno = saved_errno; return -1; }
++  if( before.st_dev != after.st_dev || before.st_ino != after.st_ino ||
++      before.st_rdev != after.st_rdev ||
++      ( before.st_mode & S_IFMT ) != ( after.st_mode & S_IFMT ) ||
++      ( readonly_flags & O_ACCMODE ) != O_RDONLY )
++    { close( readonly ); errno = ESTALE; return -1; }
++  close( fd );
++  return readonly;
++  }
+ 
+ 
+ void show_help( const int cluster, const int hardbs )
+@@ -533,7 +581,7 @@
+                   0, true ); return 1; }
+ 
+   // use same flags as reopen_infile
+-  const int ides = open( iname, O_RDONLY | rb_opts.o_direct_in | O_BINARY );
++  const int ides = drc_open_readonly_input( iname, O_RDONLY | rb_opts.o_direct_in | O_BINARY );
+   if( ides < 0 )
+     { show_file_error( iname, "Can't open input file", errno ); return 1; }
+   const long long insize =
+@@ -751,7 +799,7 @@
+   {
+   if( ides_ >= 0 ) close( ides_ );
+   // use same flags as do_rescue
+-  ides_ = open( iname_, O_RDONLY | o_direct_in | O_BINARY );
++  ides_ = drc_open_readonly_input( iname_, O_RDONLY | o_direct_in | O_BINARY );
+   if( ides_ < 0 )
+     { final_msg( iname_, "Can't reopen input file", errno ); return false; }
+   const long long insize = lseek( ides_, 0, SEEK_END );
+@@ -920,7 +968,7 @@
+       case 'T': rb_opts.timeout = parse_time_interval( arg, pn ); break;
+       case 'u': rb_opts.unidirectional = true; break;
+       case 'v': if( verbosity < 4 ) ++verbosity; break;
+-      case 'V': show_version(); return 0;
++      case 'V': show_version(); std::puts( "DRC inherited-readonly-input v2" ); return 0;
+       case 'w': fb_opts.ignore_write_errors = true; break;
+       case 'W': rb_opts.compare_before_write = true; break;
+       case 'x': rb_opts.min_outfile_size = getnum( arg, pn, hardbs, 0 ); break;

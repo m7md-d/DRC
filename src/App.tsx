@@ -2186,6 +2186,8 @@ export function App() {
       {acquisitionOpen && (
         <AcquisitionPanel
           device={recoverySource ?? device}
+          devices={snapshot?.devices ?? []}
+          refresh={() => void refresh()}
           preferPhysical={!!recoverySource}
           simple={experience === "easy"}
           platform={

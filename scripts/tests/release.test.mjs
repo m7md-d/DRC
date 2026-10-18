@@ -108,7 +108,7 @@ test('README badges use locked package versions and actual language settings', t
   assert(svg.includes('href="LICENSE"'));
   updateReadme(base, true);
 });
-test('release commit and annotated tag reach an owned local remote atomically', t => {
+test('release preparation pushes the version commit and leaves tagging to checked CI', t => {
   const base = fixture(t);
   const remote = join(base, 'remote.git');
   const repo = join(base, 'repo'); mkdirSync(repo);
@@ -119,11 +119,11 @@ test('release commit and annotated tag reach an owned local remote atomically', 
   git(['remote', 'add', 'origin', remote]); git(['push', '-u', 'origin', 'main']);
   writeFileSync(join(repo, 'version.txt'), '2');
   publishPrepared(repo, '1.0.1', ['version.txt']);
-  assert.equal(git(['rev-parse', 'refs/heads/main'], remote), git(['rev-parse', 'v1.0.1^{}'], remote));
-  assert.equal(git(['cat-file', '-t', 'v1.0.1'], remote), 'tag');
+  assert.equal(git(['rev-parse', 'refs/heads/main'], remote), git(['rev-parse', 'HEAD']));
+  assert.equal(git(['tag', '--list'], remote), '');
   assert.equal(git(['status', '--porcelain']), '');
 });
-test('failed push retains the local release tag and provides a retry command', t => {
+test('failed push retains the release commit and provides a retry command', t => {
   const base = fixture(t);
   const calls = [];
   assert.throws(() => publishPrepared(base, '1.2.3', ['README.md'], (program, args) => {
@@ -131,8 +131,9 @@ test('failed push retains the local release tag and provides a retry command', t
     if (args[0] === 'symbolic-ref') return 'main\n';
     if (args[0] === 'push') throw new Error('offline');
     return '';
-  }), /local commit and tag are retained.*git push/);
-  assert(calls.some(a => a[0] === 'tag'));
+  }), /local release commit is retained.*git push/);
+  assert(!calls.some(a => a[0] === 'tag'));
+  assert(calls.some(a => a[0] === 'commit'));
   assert(!calls.some(a => ['reset', 'revert'].includes(a[0])));
 });
 test('unrelated staged work prevents the release commit and tag', t => {

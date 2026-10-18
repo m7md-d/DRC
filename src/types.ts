@@ -222,6 +222,7 @@ export interface AcquisitionPlan {
   arguments: string[];
   confirmation: string;
   resumeJob: string | null;
+  previousSource?: AcquisitionSource | null;
 }
 export interface MapSummary {
   rescuedBytes: string;
@@ -254,6 +255,7 @@ export interface AcquisitionJob {
   toolVersion: string;
   rateReports?: RateReport[];
   progressReports?: ProgressReport[];
+  attemptSources?: { attempt: number; openedAt: number; source: AcquisitionSource }[];
 }
 
 export interface ProgressSample {

@@ -4,6 +4,8 @@ mod extraction;
 mod host_evidence;
 mod images;
 mod linux;
+#[cfg(target_os = "macos")]
+pub mod mac_source;
 mod menu_bar;
 mod model;
 mod mount_guard;
@@ -456,6 +458,29 @@ async fn new_session(
 }
 
 #[tauri::command]
+async fn open_source_access_settings() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let output = Command::new("/usr/bin/open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")
+            .output()
+            .map_err(|e| e.to_string())?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "Cannot open Full Disk Access settings: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ))
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("Full Disk Access settings are available on macOS only.".into())
+    }
+}
+
+#[tauri::command]
 async fn pick_path(app: tauri::AppHandle, kind: String) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let dialog = app.dialog().file();
@@ -738,7 +763,7 @@ fn physical_source(
     validate_physical(app, &device)?;
     let guard = mount_guard::MountGuard::acquire(&device.id)?;
     validate_physical(app, &device)?;
-    let input = guard.open_source()?;
+    let input = guard.open_source(&mut |record| emit_record(app, record))?;
     validate_physical(app, &device)?;
     Ok((device, input, guard))
 }
@@ -860,9 +885,6 @@ async fn prepare_acquisition(
                     != Some(request.settings.sector_size)
             {
                 return Err("Physical acquisition sector size must match the source's reported logical block size.".into());
-            }
-            if let Some(job) = &old {
-                match &job.source { Source::Physical{device:prior} if device.identity_key==prior.identity_key=>{},_=>return Err("The original source descriptor does not match. DRC will not automatically rebind a reconnect to a saved image.".into()) }
             }
             let size = acquisition::decimal(
                 device
@@ -1145,6 +1167,7 @@ pub fn run() {
             load_session,
             new_session,
             pick_path,
+            open_source_access_settings,
             export_session,
             import_session,
             import_session_json,

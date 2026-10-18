@@ -9,7 +9,14 @@ if [[ ! -f "$archive" ]]; then
 fi
 printf '%s  %s\n' "$expected" "$archive" | sha256sum --check --status
 source_dir=.cache/ddrescue-1.30
-if [[ ! -d "$source_dir" ]]; then tar --lzip -xf "$archive" -C .cache; fi
+patch_file=scripts/ddrescue-readonly-fd.patch
+patch_digest=$(sha256sum "$patch_file" | cut -d ' ' -f1)
+if [[ ! -f "$source_dir/.drc-fd-patch-sha256" ]] || [[ $(cat "$source_dir/.drc-fd-patch-sha256") != "$patch_digest" ]]; then
+  rm -rf "$source_dir"
+  tar --lzip -xf "$archive" -C .cache
+  patch --batch -d "$source_dir" -p1 < "$patch_file"
+  printf '%s\n' "$patch_digest" > "$source_dir/.drc-fd-patch-sha256"
+fi
 machine=$(uname -m)
 case "$machine" in x86_64) target=x86_64-unknown-linux-gnu;; aarch64|arm64) target=aarch64-unknown-linux-gnu;; *) printf 'Unsupported architecture: %s\n' "$machine" >&2; exit 1;; esac
 (

@@ -63,16 +63,18 @@ Linux installation commands, tool flags and copyable examples.
 **macOS:** build locally with Node.js, Rust, Xcode command-line tools and Homebrew:
 
 ```sh
-brew install ddrescue smartmontools sleuthkit
+brew install smartmontools sleuthkit
 npm ci
 npm run desktop:build
 ```
 
-Open `DRC.app` in the project root. The local bundle is ad-hoc signed; it is not notarized. The image reader is bundled. GNU ddrescue and smartctl must be installed separately on macOS.
+Open `DRC.app` in the project root. The local bundle is ad-hoc signed; it is not notarized. The image reader and GNU ddrescue are bundled. SMART queries use the separately installed smartmontools.
 
 ## Source access
 
 DRC opens sources read-only. Imaging and extraction write to a reviewed destination. Mounted and system disks are excluded from physical acquisition. DRC does not provide system-wide or hardware write blocking.
+
+On macOS, opening a raw source can request administrator authorization and require Full Disk Access. The app and copy process stay unprivileged; the authorized helper opens only the reviewed source for reading. Rebuilding an ad-hoc signed app can require renewing its privacy permission.
 
 USB power budgets are reported metadata, not measured electrical consumption. A device without readable storage access cannot be imaged. NTFS/exFAT reader support depends on Sleuth Kit; the generated recovery test corpus currently covers FAT16/MBR.
 

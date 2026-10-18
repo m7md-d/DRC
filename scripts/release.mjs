@@ -20,9 +20,8 @@ export function publishPrepared(base, version, files, run = command) {
     throw new Error('Unrelated staged changes appeared during release preparation. Commit them separately.');
   }
   git(['commit', '-m', `Release v${version}`]);
-  git(['tag', '-a', `v${version}`, '-m', `DRC ${version}`]);
-  try { git(['push', '--atomic', 'origin', `HEAD:refs/heads/${branch}`, `refs/tags/v${version}`]); }
-  catch { throw new Error(`Publish failed; the local commit and tag are retained. Retry: git push --atomic origin HEAD:refs/heads/${branch} refs/tags/v${version}`); }
+  try { git(['push', 'origin', `HEAD:refs/heads/${branch}`]); }
+  catch { throw new Error(`Push failed; the local release commit is retained. Retry: git push origin HEAD:refs/heads/${branch}`); }
 }
 export function release(args, base = root) {
   const flags = args.filter(a => a.startsWith('--'));
@@ -33,7 +32,7 @@ export function release(args, base = root) {
   const target = nextVersion(current, args.find(a => !a.startsWith('--')));
   const files = [...versionFiles, 'README.md', 'docs/images'];
   console.log(`${current} → ${target}\nUpdate manifests and lockfiles; test; build macOS; capture native screenshots; regenerate README.`);
-  console.log(flags.includes('--publish') ? `Commit, tag v${target}, and push atomically. GitHub publishes after package checks pass.` : 'Local preparation only. --publish also creates and pushes the release commit and tag.');
+  console.log(flags.includes('--publish') ? `Commit and push v${target}. GitHub checks the commit, builds packages, then creates the tag and release.` : 'Local preparation only. --publish also commits and pushes the prepared version.');
   if (flags.includes('--dry-run')) return;
   if (process.platform !== 'darwin') throw new Error('Prepare releases on macOS so the native screenshots can be captured. Linux packages are built by GitHub Actions.');
   const git = (a) => command('git', a, base, true).trim();
@@ -55,7 +54,7 @@ export function release(args, base = root) {
   checkVersion(base);
   updateReadme(base, true);
   if (flags.includes('--publish')) publishPrepared(base, target, files);
-  else console.log(`Prepared ${target}. Review and commit these files, then create/push v${target}; or use --publish on the next release from a clean checkout.`);
+  else console.log(`Prepared ${target}. Review, commit and push these files. GitHub checks the commit and publishes the new version after package checks pass.`);
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try { release(process.argv.slice(2)); }

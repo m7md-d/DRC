@@ -130,7 +130,9 @@ pub fn open_readonly(path: &Path) -> Result<File, String> {
     options.read(true);
     #[cfg(unix)]
     options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    options.open(path).map_err(|e| format!("Cannot open source read-only: {e}. DRC does not elevate itself or change device permissions."))
+    options
+        .open(path)
+        .map_err(|e| format!("Cannot open {} read-only: {e}", path.display()))
 }
 
 pub fn existing_regular_source(path: &Path) -> Result<(PathBuf, File, FileIdentity), String> {

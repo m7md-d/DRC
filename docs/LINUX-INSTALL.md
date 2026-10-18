@@ -59,7 +59,7 @@ sudo apt update
 sudo apt install gddrescue smartmontools sleuthkit testdisk usbutils udev
 ```
 
-The distribution's `ddrescue` may be older than 1.30. DRC uses its packaged `drc-ddrescue` for acquisition; `--no-sweep` requires 1.30. The included ddrescue source archive, COPYING notice and reproducible build script accompany the binary. Do not replace or mix a rescue mapfile with an unrelated image.
+The distribution's `ddrescue` may be older than 1.30. DRC uses its packaged `drc-ddrescue` for acquisition; `--no-sweep` requires 1.30. The included source archive, inherited-read-only-input patch, COPYING notice and build script accompany the binary. Do not replace or mix a rescue mapfile with an unrelated image.
 
 ## Build from source on Debian 12+
 
@@ -67,7 +67,7 @@ Install development dependencies:
 
 ```sh
 sudo apt update
-sudo apt install udisks2 pciutils build-essential pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev libssl-dev librsvg2-dev patchelf libtsk-dev sleuthkit gddrescue smartmontools usbutils udev lzip curl ca-certificates python3 git
+sudo apt install udisks2 pciutils build-essential pkg-config libwebkit2gtk-4.1-dev libgtk-3-dev libssl-dev librsvg2-dev patchelf libtsk-dev sleuthkit gddrescue smartmontools usbutils udev lzip patch curl ca-certificates python3 git
 ```
 
 Install **Node.js 22** and a current **stable Rust** toolchain using their official distributions. Confirm `node --version`, `npm --version`, `rustc --version` and `cargo --version`. Then:
@@ -129,6 +129,6 @@ docker build --file scripts/linux/Dockerfile.fedora --target artifacts --output 
 docker build --file scripts/linux/Dockerfile.fedora --target install-check .
 ```
 
-For a source build on Fedora, install Node.js 22 and stable Rust, plus Tauri's [Fedora prerequisites](https://v2.tauri.app/start/prerequisites/#linux), `gcc-c++ make pkgconf-pkg-config sleuthkit-devel patchelf lzip python3 rpm-build`, then run `npm ci` and `npm run desktop:build:fedora`. Build output is under `src-tauri/target/release/bundle/rpm/`. GitHub Actions builds both Fedora architectures independently and checks installation in a fresh Fedora image; it publishes only on an existing version tag after all jobs pass.
+For a source build on Fedora, install Node.js 22 and stable Rust, plus Tauri's [Fedora prerequisites](https://v2.tauri.app/start/prerequisites/#linux), `gcc-c++ make pkgconf-pkg-config sleuthkit-devel patchelf lzip patch python3 rpm-build`, then run `npm ci` and `npm run desktop:build:fedora`. Build output is under `src-tauri/target/release/bundle/rpm/`. GitHub Actions builds both Fedora architectures independently and checks installation in a fresh Fedora image; it publishes only on an existing version tag after all jobs pass.
 
 Package names: [Fedora ddrescue](https://packages.fedoraproject.org/pkgs/ddrescue/ddrescue/), [systemd-udev](https://packages.fedoraproject.org/pkgs/systemd/systemd-udev/), [Sleuth Kit development files](https://packages.fedoraproject.org/pkgs/sleuthkit/sleuthkit-devel/). RPM configuration follows [Tauri's RPM packaging guide](https://v2.tauri.app/distribute/rpm/).

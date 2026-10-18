@@ -1,5 +1,11 @@
 # Third-party notices
 
+## GNU ddrescue
+
+GNU ddrescue 1.30, Copyright (C) 2004–2026 Antonio Diaz Diaz. Licensed under GNU GPL version 2 or later. Source: https://ftp.gnu.org/gnu/ddrescue/ddrescue-1.30.tar.lz
+
+The bundled tool includes a DRC modification dated 18 October 2026: rescue input paths of the form `/dev/fd/N` duplicate an inherited read-only descriptor instead of reopening it. Writable inputs are reopened read-only and checked against the original file identity; the copy stops with the original OS error if that fails. Incompatible open flags are rejected. The original source archive, exact patch, license and build instructions are included in `Contents/Resources/GNUddrescue` on macOS and `/usr/share/doc/drc` on Linux.
+
 
 ## macmon telemetry research and adapted ABI definitions
 

@@ -1,30 +1,56 @@
 name: Desktop packages
 on:
-  pull_request:
-  push:
-    tags: ['v*']
+  workflow_run:
+    workflows: [Checks]
+    types: [completed]
   workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  group: linux-desktop-${{ github.ref }}
-  cancel-in-progress: true
+  group: desktop-release
+  cancel-in-progress: false
 jobs:
-  metadata:
+  select:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
+       github.event.workflow_run.head_branch == github.event.repository.default_branch &&
+       github.event.workflow_run.event != 'pull_request')
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      release: ${{ steps.target.outputs.release }}
+      version: ${{ steps.target.outputs.version }}
+      tag: ${{ steps.target.outputs.tag }}
+      sha: ${{ steps.target.outputs.sha }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - run: npm ci
-      - run: npm run version:check
-      - run: npm run readme:check
-      - run: npm run copy:check
-      - run: npm run public:check
-      - run: npm run release:test
+      - id: target
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { checkVersion } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/version.mjs`);
+            const { selectRelease } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/ci-release.mjs`);
+            const sha = context.payload.workflow_run?.head_sha ?? context.sha;
+            const version = checkVersion();
+            const result = await selectRelease({ github, context, version, sha });
+            core.setOutput('release', String(result.release));
+            core.setOutput('version', version);
+            core.setOutput('tag', result.tag);
+            core.setOutput('sha', sha);
+            await core.summary.addHeading(result.release ? `Build ${result.tag}` : 'No new release').addRaw(result.reason).write();
   build:
-    needs: metadata
+    needs: select
+    if: needs.select.outputs.release == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -49,6 +75,9 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.select.outputs.sha }}
+          persist-credentials: false
       - name: Build and test ${{ matrix.family }}
         run: docker build --file ${{ matrix.dockerfile }} --target artifacts --output type=local,dest=out .
       - name: Verify clean ${{ matrix.family }} installation
@@ -64,19 +93,24 @@ jobs:
           path: out/*
           if-no-files-found: error
   macos:
-    needs: metadata
+    needs: select
+    if: needs.select.outputs.release == 'true'
     runs-on: macos-15
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.select.outputs.sha }}
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
       - uses: dtolnay/rust-toolchain@stable
-      - run: brew install ddrescue smartmontools sleuthkit
+      - run: brew install smartmontools sleuthkit
       - run: npm ci
       - run: npm test && npm run native:test
       - run: npm run rust:test
+      - run: python3 scripts/tests/inherited-source.py src-tauri/binaries/drc-ddrescue-aarch64-apple-darwin
       - run: node scripts/rust.mjs clippy --manifest-path src-tauri/Cargo.toml --features macos-menu-bar --all-targets -- -D warnings
       - run: npm run desktop:build
       - name: Package macOS app
@@ -89,13 +123,16 @@ jobs:
           path: out/*.zip
           if-no-files-found: error
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build, macos]
+    if: needs.select.outputs.release == 'true'
+    needs: [select, build, macos]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.select.outputs.sha }}
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -117,18 +154,28 @@ jobs:
           cp scripts/linux/install-debian.sh scripts/linux/install-fedora.sh docs/LINUX-INSTALL.md release/
           cd release
           sha256sum *.deb *.rpm *.zip > SHA256SUMS
+      - name: Create release tag after package checks
+        uses: actions/github-script@v7
+        env:
+          RELEASE_VERSION: ${{ needs.select.outputs.version }}
+          RELEASE_SHA: ${{ needs.select.outputs.sha }}
+        with:
+          script: |
+            const { ensureReleaseTag } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/ci-release.mjs`);
+            await ensureReleaseTag({ github, repo: context.repo, version: process.env.RELEASE_VERSION, sha: process.env.RELEASE_SHA });
       - name: Upload and publish tag release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.select.outputs.tag }}
         run: |
-          if gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft > release-state; then
+          if gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft > release-state; then
             if [ "$(cat release-state)" != true ]; then
               echo "Release is already published."
               exit 0
             fi
-            gh release edit "$GITHUB_REF_NAME" --title "DRC $GITHUB_REF_NAME" --notes-file docs/RELEASE-NOTES.md
+            gh release edit "$RELEASE_TAG" --title "DRC $RELEASE_TAG" --notes-file docs/RELEASE-NOTES.md
           else
-            gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "DRC $GITHUB_REF_NAME" --notes-file docs/RELEASE-NOTES.md
+            gh release create "$RELEASE_TAG" --draft --verify-tag --title "DRC $RELEASE_TAG" --notes-file docs/RELEASE-NOTES.md
           fi
-          gh release upload "$GITHUB_REF_NAME" release/* --clobber
-          gh release edit "$GITHUB_REF_NAME" --draft=false --latest
+          gh release upload "$RELEASE_TAG" release/* --clobber
+          gh release edit "$RELEASE_TAG" --draft=false --latest

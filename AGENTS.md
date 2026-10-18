@@ -11,4 +11,4 @@
 - Public images must show complete, functional views. Keep bug reproductions and unfinished captures under ignored local storage; never stage them as documentation assets.
 - Screenshots must come from the running desktop app. Use generated image files for file-reading examples; do not start disk tests, imaging, resets or writes on connected personal media to obtain screenshots.
 - Use the release/version scripts for current version numbers and generated README sections. Historical version numbers in validation records remain historical.
-- Do not discard staged or unrelated changes. No version bump, commit, tag or push unless the requested work calls for that action.
+- Do not discard staged or unrelated changes. Bump versions, commit, tag or push only after the owner explicitly requests those actions. Ordinary implementation requests do not authorize them.

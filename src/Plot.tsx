@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { humanBytes } from "./data";
+import { useAnimatedCount } from "./useAnimatedCount";
 import {
   plotIndices,
   plotNumber,
@@ -21,6 +22,28 @@ export function metricLabel(
     ? `${humanBytes(value)}${unit === "bytes/s" ? "/s" : ""}`
     : `${value}${unit === "ms" ? " ms" : ""}`;
 }
+function AnimatedMetric({
+  value,
+  unit,
+  duration,
+  live,
+  epoch,
+}: {
+  value: string;
+  unit: Parameters<typeof metricLabel>[1];
+  duration: number;
+  live: boolean;
+  epoch: string;
+}) {
+  const shown = useAnimatedCount(value, duration, live, epoch, false);
+  return (
+    <strong
+      data-hint={`Latest recorded value: ${value} ${unit}. Display movement stays between received samples.`}
+    >
+      {metricLabel(shown, unit)}
+    </strong>
+  );
+}
 export function Plot({
   title,
   description,
@@ -31,6 +54,8 @@ export function Plot({
   xFormat = (s) => `${s}s`,
   markersOnly = false,
   onSelect,
+  live = false,
+  intervalMs = 0,
 }: {
   title: string;
   description: string;
@@ -41,10 +66,15 @@ export function Plot({
   xFormat?: (value: string) => string;
   markersOnly?: boolean;
   onSelect?: (index: number) => void;
+  live?: boolean;
+  intervalMs?: number;
 }) {
   const [selected, setSelected] = useState<number | null>(null);
   const index = Math.min(selected ?? points.length - 1, points.length - 1);
   const active = points[index];
+  const following = live && selected === null;
+  const transition =
+    following && intervalMs > 0 ? `transform ${intervalMs}ms linear` : "none";
   const geometry = useMemo(() => {
     const xs = points.map((p) => plotNumber(p.x) ?? 0);
     const minX = xs.reduce((a, b) => Math.min(a, b), Infinity),
@@ -162,20 +192,31 @@ export function Plot({
               ))}
           </g>
         ))}
-        <line
-          className="plot-crosshair"
-          x1={geometry.x(index)}
-          x2={geometry.x(index)}
-          y1={top}
-          y2={height - bottom}
-        />
+        <g
+          className="plot-live-cursor"
+          style={{
+            transform: `translateX(${geometry.x(index)}px)`,
+            transition,
+          }}
+        >
+          <line
+            className="plot-crosshair"
+            x1={0}
+            x2={0}
+            y1={top}
+            y2={height - bottom}
+          />
+        </g>
         {series.map(
           (s, si) =>
             active.values[si] !== null && (
               <circle
                 key={s.label}
-                cx={geometry.x(index)}
-                cy={geometry.y(plotNumber(active.values[si])!)}
+                className="plot-live-cursor"
+                style={{
+                  transform: `translate(${geometry.x(index)}px, ${geometry.y(plotNumber(active.values[si])!)}px)`,
+                  transition,
+                }}
                 r={4}
                 fill="var(--panel)"
                 stroke={s.color}
@@ -217,7 +258,13 @@ export function Plot({
                 "Not reported"
               ) : (
                 <>
-                  <strong>{metricLabel(active.values[si], unit)}</strong>
+                  <AnimatedMetric
+                    value={active.values[si]}
+                    unit={unit}
+                    duration={intervalMs}
+                    live={following}
+                    epoch={title}
+                  />
                   <code>
                     {active.values[si]} {unit}
                   </code>

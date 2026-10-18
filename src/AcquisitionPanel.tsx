@@ -6,6 +6,7 @@ import { Icon } from "./Icon";
 import { FieldTable } from "./FieldTable";
 import { Select } from "./Select";
 import { AcquisitionCharts } from "./AcquisitionCharts";
+import { AcquisitionProgress } from "./AcquisitionProgress";
 import { ByteValue } from "./ByteValue";
 import { commandLine, canAcquireDevice, humanBytes } from "./data";
 import type {
@@ -33,6 +34,8 @@ const sourceLabel = (source: AcquisitionJob["source"], platform = "macOS") =>
     : `/dev/${platform === "macOS" ? "r" : ""}${source.device.id} · ${source.device.name}`;
 export function AcquisitionPanel({
   device,
+  devices = [],
+  refresh,
   simple = false,
   preferPhysical = false,
   platform = "macOS",
@@ -42,6 +45,8 @@ export function AcquisitionPanel({
   started,
 }: {
   device?: Device;
+  devices?: Device[];
+  refresh?: () => void;
   simple?: boolean;
   preferPhysical?: boolean;
   platform?: string;
@@ -83,7 +88,20 @@ export function AcquisitionPanel({
   const [chosen, setChosen] = useState<string | null>(jobs[0]?.id ?? null);
   const [rawMap, setRawMap] = useState<string | null>(null);
   const [editedResume, setEditedResume] = useState(false);
+  const [setupOpen, setSetupOpen] = useState(jobs.length === 0);
+  const [resumeToken, setResumeToken] = useState<string | null>(null);
   const job = jobs.find((j) => j.id === chosen) ?? jobs[0];
+  const candidates = (devices.length ? devices : device ? [device] : []).filter(
+    canAcquireDevice,
+  );
+  const resumeDevice =
+    resumeToken !== null
+      ? candidates.find((d) => d.token === resumeToken)
+      : job?.source.kind === "physical" &&
+          device?.identityKey === job.source.device.identityKey &&
+          canAcquireDevice(device)
+        ? device
+        : undefined;
   const active = jobs.some((j) => ["running", "pausing"].includes(j.state));
   const discard = useCallback(() => {
     if (planRef.current) void bridge.cancelPlan(planRef.current.ticket);
@@ -119,7 +137,7 @@ export function AcquisitionPanel({
     const next = await bridge.prepareAcquisition({
       kind: source?.kind ?? kind,
       imagePath: source?.kind === "image" ? source.path : image || null,
-      deviceToken: device?.token ?? null,
+      deviceToken: (resume ? resumeDevice : device)?.token ?? null,
       destination,
       settings: resume
         ? editedResume
@@ -145,20 +163,249 @@ export function AcquisitionPanel({
     setPlan(next);
     setConfirmation("");
   }
+  const readSettings = (resuming = false) => (
+    <ModeDetails simple={simple && !resuming} title="Change copy settings">
+      <div className="form-grid">
+        <label className="form-field">
+          Input offset · bytes
+          <input
+            inputMode="numeric"
+            value={settings.offset}
+            disabled={working || active || resuming}
+            onChange={(e) =>
+              setSettings((s) => ({ ...s, offset: e.target.value }))
+            }
+          />
+        </label>
+        <label className="form-field">
+          Length · bytes
+          <input
+            inputMode="numeric"
+            placeholder="Remaining source bytes"
+            value={settings.length ?? ""}
+            disabled={working || active || resuming}
+            onChange={(e) =>
+              setSettings((s) => ({
+                ...s,
+                length: e.target.value || null,
+              }))
+            }
+          />
+        </label>
+        <div className="form-field">
+          <span>Logical sector size · bytes</span>
+          <Select
+            label="Logical sector size · bytes"
+            value={String(settings.sectorSize)}
+            disabled={working || active || resuming}
+            onChange={(value) =>
+              setSettings((s) => ({
+                ...s,
+                sectorSize: Number(value),
+              }))
+            }
+            options={[512, 1024, 2048, 4096].map((n) => ({
+              value: String(n),
+              label: String(n),
+              detail: `${n} bytes per logical sector`,
+            }))}
+          />
+        </div>
+        <label className="form-field">
+          Retry passes · 0–5
+          <input
+            type="number"
+            min="0"
+            max="5"
+            value={settings.retryPasses}
+            disabled={working || active}
+            onChange={(e) =>
+              setSettings((s) => ({
+                ...s,
+                retryPasses: Number(e.target.value),
+              }))
+            }
+          />
+        </label>
+        <label className="form-field">
+          Time since last successful read · seconds
+          <input
+            type="number"
+            min="1"
+            max="3600"
+            value={settings.timeoutSeconds}
+            disabled={working || active}
+            onChange={(e) =>
+              setSettings((s) => ({
+                ...s,
+                timeoutSeconds: Number(e.target.value),
+              }))
+            }
+          />
+        </label>
+        <label className="form-field">
+          Maximum read rate · bytes/s
+          <input
+            inputMode="numeric"
+            placeholder="No cap"
+            value={settings.maxReadRate ?? ""}
+            disabled={working || active}
+            onChange={(e) =>
+              setSettings((s) => ({
+                ...s,
+                maxReadRate: e.target.value || null,
+              }))
+            }
+          />
+        </label>
+        <div
+          className="form-field"
+          data-hint="Controls the maximum sectors per copying request. Smaller requests can help when large reads fail or take too long, and may reduce throughput. It does not limit a blocked kernel call. Applied only after review."
+        >
+          <span>Read request size · logical sectors</span>
+          <Select
+            label="Read request size · logical sectors"
+            value={String(settings.clusterSectors ?? "default")}
+            disabled={working || active}
+            onChange={(value) =>
+              setSettings((s) => ({
+                ...s,
+                clusterSectors: value === "default" ? null : Number(value),
+              }))
+            }
+            options={[
+              {
+                value: "default",
+                label: "Tool default",
+                detail: "ddrescue's default cluster size",
+              },
+              ...[1, 8, 32, 128, 512, 2048].map((n) => ({
+                value: String(n),
+                label: `${n} ${n === 1 ? "sector" : "sectors"}`,
+                detail: `${humanBytes(String(n * settings.sectorSize))} · ${n * settings.sectorSize} bytes per copying request`,
+              })),
+            ]}
+          />
+        </div>
+        <div
+          className="form-field"
+          data-hint="Stops the attempt after the selected number of read errors is exceeded. This counts read errors, not bad sectors. The image and saved map remain available for review. No automatic restart."
+        >
+          <span>Stop after read errors exceed</span>
+          <Select
+            label="Stop after read errors exceed"
+            value={String(settings.maxReadErrors ?? "none")}
+            disabled={working || active}
+            onChange={(value) =>
+              setSettings((s) => ({
+                ...s,
+                maxReadErrors: value === "none" ? null : Number(value),
+              }))
+            }
+            options={[
+              { value: "none", label: "No error-count limit" },
+              ...[1, 5, 20, 100, 1000].map((n) => ({
+                value: String(n),
+                label: String(n),
+                detail: "Maximum read errors for this attempt",
+              })),
+            ]}
+          />
+        </div>
+      </div>
+      <label className="check-field">
+        <input
+          type="checkbox"
+          checked={settings.copyingOnly}
+          disabled={working || active}
+          onChange={(e) =>
+            setSettings((s) => ({
+              ...s,
+              copyingOnly: e.target.checked,
+            }))
+          }
+        />
+        <span>
+          Copying phase only
+          <small>
+            Skips ddrescue trimming, sweeping and scraping. All flags appear in
+            the command preview.
+          </small>
+        </span>
+      </label>
+      <label className="check-field">
+        <input
+          type="checkbox"
+          checked={settings.reverse ?? false}
+          disabled={working || active}
+          onChange={(e) =>
+            setSettings((s) => ({
+              ...s,
+              reverse: e.target.checked,
+            }))
+          }
+        />
+        <span>
+          Read backwards
+          <small>
+            Explicit reverse direction for the requested range. Kept in the
+            command preview and saved parameters.
+          </small>
+        </span>
+      </label>
+    </ModeDetails>
+  );
   return (
     <WorkspacePanel
       title={simple ? "Create a disk image" : "Raw acquisition"}
       subtitle="Read-only source · disk image and resume map"
       close={dismiss}
       wide
-      className={simple ? `simple-acquisition ${job ? "has-copy" : ""}` : ""}
+      className={
+        simple
+          ? `simple-acquisition ${job ? "has-copy" : ""} ${!setupOpen && !plan && job ? "focused-copy" : ""}`
+          : ""
+      }
     >
       {error && (
         <div className="error-box" role="alert">
-          {error}
+          {platform === "macOS" &&
+          error.includes("MACOS_SOURCE_POLICY_DENIED") ? (
+            <>
+              <strong>macOS denied raw disk access</strong>
+              <p>
+                Administrator authorization succeeded, but macOS refused the
+                source (EPERM, 1). Review Full Disk Access for DRC, then quit
+                and reopen the app.
+              </p>
+              <p>
+                The OS error does not name the policy that denied access. The
+                original error is retained below.
+              </p>
+              <button
+                className="button"
+                disabled={working}
+                onClick={() =>
+                  void bridge
+                    .openSourceAccessSettings()
+                    .catch((failure) =>
+                      setError(`${error}\n${String(failure)}`),
+                    )
+                }
+              >
+                Open Full Disk Access settings
+              </button>
+              <details>
+                <summary>Original authorization error</summary>
+                <pre>{error}</pre>
+              </details>
+            </>
+          ) : (
+            error
+          )}
         </div>
       )}
-      {simple && (
+      {simple && (setupOpen || plan) && (
         <ol className="workflow-steps" aria-label="Create image steps">
           <li data-current={!plan && step === "source"}>
             <button
@@ -187,7 +434,10 @@ export function AcquisitionPanel({
         </ol>
       )}
       <div className="acquisition-layout">
-        <section className="acquisition-form">
+        <section
+          className="acquisition-form"
+          hidden={simple && !setupOpen && !plan && !!job}
+        >
           <div className="section-heading">
             <h3>
               {plan
@@ -216,6 +466,39 @@ export function AcquisitionPanel({
                   <ByteValue value={plan.freeBytes} /> available
                 </span>
               </div>
+              {plan.previousSource && (
+                <div className="review-fact" role="note">
+                  <strong>Review the reconnected source</strong>
+                  <span>
+                    Saved source:{" "}
+                    <code>{sourceLabel(plan.previousSource, platform)}</code>
+                  </span>
+                  <span>
+                    Current source:{" "}
+                    <code>{sourceLabel(plan.source, platform)}</code>
+                  </span>
+                  <p className="panel-description">
+                    The current descriptor differs from the saved source.
+                    Confirm that this is the same physical medium. Name and
+                    capacity alone do not establish its identity.
+                  </p>
+                  <ModeDetails
+                    simple={simple}
+                    title="Compare source descriptors"
+                  >
+                    <FieldTable
+                      title="Saved and current source"
+                      value={
+                        {
+                          saved: plan.previousSource,
+                          current: plan.source,
+                        } as unknown as Json
+                      }
+                      source="Original acquisition and current source observations"
+                    />
+                  </ModeDetails>
+                </div>
+              )}
               <div className="review-fact">
                 <span className="eyebrow">
                   REQUESTED RANGE / ORIGINAL OFFSETS RETAINED
@@ -280,6 +563,7 @@ export function AcquisitionPanel({
                       planRef.current = null;
                       setPlan(null);
                       setChosen(next.id);
+                      setSetupOpen(false);
                       started(next);
                     })
                   }
@@ -520,205 +804,14 @@ export function AcquisitionPanel({
                     </div>
                   </dl>
                 )}
-                <ModeDetails simple={simple} title="Change copy settings">
-                  <div className="form-grid">
-                    <label className="form-field">
-                      Input offset · bytes
-                      <input
-                        inputMode="numeric"
-                        value={settings.offset}
-                        disabled={working || active}
-                        onChange={(e) =>
-                          setSettings((s) => ({ ...s, offset: e.target.value }))
-                        }
-                      />
-                    </label>
-                    <label className="form-field">
-                      Length · bytes
-                      <input
-                        inputMode="numeric"
-                        placeholder="Remaining source bytes"
-                        value={settings.length ?? ""}
-                        disabled={working || active}
-                        onChange={(e) =>
-                          setSettings((s) => ({
-                            ...s,
-                            length: e.target.value || null,
-                          }))
-                        }
-                      />
-                    </label>
-                    <div className="form-field">
-                      <span>Logical sector size · bytes</span>
-                      <Select
-                        label="Logical sector size · bytes"
-                        value={String(settings.sectorSize)}
-                        disabled={working || active}
-                        onChange={(value) =>
-                          setSettings((s) => ({
-                            ...s,
-                            sectorSize: Number(value),
-                          }))
-                        }
-                        options={[512, 1024, 2048, 4096].map((n) => ({
-                          value: String(n),
-                          label: String(n),
-                          detail: `${n} bytes per logical sector`,
-                        }))}
-                      />
-                    </div>
-                    <label className="form-field">
-                      Retry passes · 0–5
-                      <input
-                        type="number"
-                        min="0"
-                        max="5"
-                        value={settings.retryPasses}
-                        disabled={working || active}
-                        onChange={(e) =>
-                          setSettings((s) => ({
-                            ...s,
-                            retryPasses: Number(e.target.value),
-                          }))
-                        }
-                      />
-                    </label>
-                    <label className="form-field">
-                      Time since last successful read · seconds
-                      <input
-                        type="number"
-                        min="1"
-                        max="3600"
-                        value={settings.timeoutSeconds}
-                        disabled={working || active}
-                        onChange={(e) =>
-                          setSettings((s) => ({
-                            ...s,
-                            timeoutSeconds: Number(e.target.value),
-                          }))
-                        }
-                      />
-                    </label>
-                    <label className="form-field">
-                      Maximum read rate · bytes/s
-                      <input
-                        inputMode="numeric"
-                        placeholder="No cap"
-                        value={settings.maxReadRate ?? ""}
-                        disabled={working || active}
-                        onChange={(e) =>
-                          setSettings((s) => ({
-                            ...s,
-                            maxReadRate: e.target.value || null,
-                          }))
-                        }
-                      />
-                    </label>
-                    <div
-                      className="form-field"
-                      data-hint="Controls the maximum sectors per copying request. Smaller requests can help when large reads fail or take too long, and may reduce throughput. It does not limit a blocked kernel call. Applied only after review."
-                    >
-                      <span>Read request size · logical sectors</span>
-                      <Select
-                        label="Read request size · logical sectors"
-                        value={String(settings.clusterSectors ?? "default")}
-                        disabled={working || active}
-                        onChange={(value) =>
-                          setSettings((s) => ({
-                            ...s,
-                            clusterSectors:
-                              value === "default" ? null : Number(value),
-                          }))
-                        }
-                        options={[
-                          {
-                            value: "default",
-                            label: "Tool default",
-                            detail: "ddrescue's default cluster size",
-                          },
-                          ...[1, 8, 32, 128, 512, 2048].map((n) => ({
-                            value: String(n),
-                            label: `${n} ${n === 1 ? "sector" : "sectors"}`,
-                            detail: `${humanBytes(String(n * settings.sectorSize))} · ${n * settings.sectorSize} bytes per copying request`,
-                          })),
-                        ]}
-                      />
-                    </div>
-                    <div
-                      className="form-field"
-                      data-hint="Stops the attempt after the selected number of read errors is exceeded. This counts read errors, not bad sectors. The image and saved map remain available for review. No automatic restart."
-                    >
-                      <span>Stop after read errors exceed</span>
-                      <Select
-                        label="Stop after read errors exceed"
-                        value={String(settings.maxReadErrors ?? "none")}
-                        disabled={working || active}
-                        onChange={(value) =>
-                          setSettings((s) => ({
-                            ...s,
-                            maxReadErrors:
-                              value === "none" ? null : Number(value),
-                          }))
-                        }
-                        options={[
-                          { value: "none", label: "No error-count limit" },
-                          ...[1, 5, 20, 100, 1000].map((n) => ({
-                            value: String(n),
-                            label: String(n),
-                            detail: "Maximum read errors for this attempt",
-                          })),
-                        ]}
-                      />
-                    </div>
-                  </div>
-                  <label className="check-field">
-                    <input
-                      type="checkbox"
-                      checked={settings.copyingOnly}
-                      disabled={working || active}
-                      onChange={(e) =>
-                        setSettings((s) => ({
-                          ...s,
-                          copyingOnly: e.target.checked,
-                        }))
-                      }
-                    />
-                    <span>
-                      Copying phase only
-                      <small>
-                        Skips ddrescue trimming, sweeping and scraping. All
-                        flags appear in the command preview.
-                      </small>
-                    </span>
-                  </label>
-                  <label className="check-field">
-                    <input
-                      type="checkbox"
-                      checked={settings.reverse ?? false}
-                      disabled={working || active}
-                      onChange={(e) =>
-                        setSettings((s) => ({
-                          ...s,
-                          reverse: e.target.checked,
-                        }))
-                      }
-                    />
-                    <span>
-                      Read backwards
-                      <small>
-                        Explicit reverse direction for the requested range. Kept
-                        in the command preview and saved parameters.
-                      </small>
-                    </span>
-                  </label>
-                </ModeDetails>
+                {readSettings()}
                 <p className="panel-description">
                   The read-success timeout belongs to ddrescue; it cannot
                   guarantee an immediate return from a blocked operating-system
                   I/O call. Disk destinations and source writes are unavailable.{" "}
                   {platform === "Linux"
                     ? "Source preparation may open the system authorization dialog to request a read-only handle for this device; DRC stays unprivileged."
-                    : "Privilege elevation is unavailable in this adapter."}
+                    : "macOS may request administrator authorization to open this source read-only. The app and copy process stay unprivileged."}
                 </p>
                 <button
                   className="button primary"
@@ -748,7 +841,23 @@ export function AcquisitionPanel({
             <h3>
               {simple ? "Copy progress and history" : "Saved acquisitions"}
             </h3>
-            <span className="count-tag">{jobs.length}</span>
+            <div className="panel-actions">
+              <span className="count-tag">{jobs.length}</span>
+              {job && (
+                <button
+                  className="button subtle"
+                  disabled={working || active}
+                  onClick={() => {
+                    discard();
+                    setSetupOpen(true);
+                    setEditedResume(false);
+                    setStep("source");
+                  }}
+                >
+                  New image…
+                </button>
+              )}
+            </div>
           </div>
           <div className="job-list">
             {jobs.map((item) => (
@@ -757,6 +866,10 @@ export function AcquisitionPanel({
                 className={`job-row ${job?.id === item.id ? "active" : ""}`}
                 onClick={() => {
                   setChosen(item.id);
+                  discard();
+                  setResumeToken(null);
+                  setEditedResume(false);
+                  setSetupOpen(false);
                   setRawMap(null);
                 }}
               >
@@ -777,6 +890,7 @@ export function AcquisitionPanel({
           )}
           {job && (
             <>
+              <AcquisitionProgress key={job.id} job={job} />
               <div className="job-state" data-state={job.state}>
                 <strong>{job.state}</strong>
                 <span>
@@ -785,27 +899,74 @@ export function AcquisitionPanel({
                 </span>
               </div>
               <code className="artifact-path">
-                {sourceLabel(job.source, platform)}
+                {sourceLabel(
+                  job.attemptSources?.at(-1)?.source ?? job.source,
+                  platform,
+                )}
               </code>
               <p className="panel-description">{job.message}</p>
-              <AcquisitionCharts key={job.id} job={job} />
-              {!["running", "pausing", "completed"].includes(job.state) && (
-                <label className="check-field">
-                  <input
-                    type="checkbox"
-                    checked={editedResume}
-                    onChange={(e) => setEditedResume(e.target.checked)}
-                    disabled={working || active}
-                  />
-                  <span>
-                    Use the edited read settings on resume
-                    <small>
-                      Uses the form's phases, retries, timeout, request size,
-                      error limit and rate cap. Source, destination and range
-                      remain fixed; review shows every setting.
-                    </small>
-                  </span>
-                </label>
+              {job.source.kind === "physical" &&
+                job.map &&
+                !["running", "pausing", "completed"].includes(job.state) && (
+                  <div className="resume-source">
+                    <strong>Resume this copy</strong>
+                    <p>
+                      Connect the original source, select it below, then review
+                      and resume. DRC reuses the saved image and map.
+                    </p>
+                    <Select
+                      label="Reconnected source"
+                      value={resumeDevice?.token ?? ""}
+                      disabled={working || active}
+                      onChange={setResumeToken}
+                      options={[
+                        { value: "", label: "Choose the reconnected disk" },
+                        ...candidates.map((d) => ({
+                          value: d.token,
+                          label: d.name,
+                          detail: `/dev/${d.id} · ${humanBytes(d.sizeBytes)}`,
+                        })),
+                      ]}
+                    />
+                    {refresh && (
+                      <button
+                        className="button subtle"
+                        disabled={working || busy || active}
+                        onClick={refresh}
+                      >
+                        <Icon name="refresh" /> Refresh disks
+                      </button>
+                    )}
+                  </div>
+                )}
+              {job.map &&
+                !["running", "pausing", "completed"].includes(job.state) && (
+                  <label className="check-field">
+                    <input
+                      type="checkbox"
+                      checked={editedResume}
+                      onChange={(e) => {
+                        setEditedResume(e.target.checked);
+                        if (e.target.checked) setSettings({ ...job.settings });
+                      }}
+                      disabled={working || active}
+                    />
+                    <span>
+                      Use the edited read settings on resume
+                      <small>
+                        Change phases, retries, timeout, request size, error
+                        limit or rate cap below. The source, destination and
+                        range stay fixed.
+                      </small>
+                    </span>
+                  </label>
+                )}
+              {editedResume && job.map && !active && readSettings(true)}
+              {!job.map && !active && (
+                <p className="panel-description">
+                  No resume map was saved. Use “New image…” to start another
+                  copy.
+                </p>
               )}
               <div className="panel-actions">
                 {["running", "pausing"].includes(job.state) ? (
@@ -816,24 +977,24 @@ export function AcquisitionPanel({
                       void action(() => bridge.pauseAcquisition(job.id))
                     }
                   >
-                    Stop and save map
+                    {simple ? "Pause copy" : "Stop and save map"}
                   </button>
-                ) : (
+                ) : job.state !== "completed" ? (
                   <button
-                    className="button"
+                    className="button primary"
                     disabled={
                       working ||
                       busy ||
                       active ||
                       job.state === "completed" ||
-                      (job.source.kind === "physical" &&
-                        (!device || device.metadataOnly))
+                      !job.map ||
+                      (job.source.kind === "physical" && !resumeDevice)
                     }
                     onClick={() => void action(() => prepare(job))}
                   >
-                    Review resume
+                    Review and resume…
                   </button>
-                )}
+                ) : null}
                 <button
                   className="button"
                   disabled={!job.map || working}
@@ -846,6 +1007,7 @@ export function AcquisitionPanel({
                   Original mapfile
                 </button>
               </div>
+              <AcquisitionCharts key={job.id} job={job} />
               {job.map && (
                 <>
                   <div

@@ -45,7 +45,8 @@
       "minimumSystemVersion": "13.0"
     },
     "externalBin": [
-      "binaries/drc-tsk"
+      "binaries/drc-tsk",
+      "binaries/drc-ddrescue"
     ],
     "resources": [
       "../THIRD-PARTY-NOTICES.md"

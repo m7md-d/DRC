@@ -155,6 +155,46 @@
   gap: 10px;
   border: 0;
 }
+
+.copy-progress {
+  margin: 16px 0 12px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.copy-progress-heading,
+.copy-progress-caption {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.copy-progress-heading strong { font-size: 15px; font-weight: 600; }
+.copy-progress-heading > span { font-size: 24px; font-weight: 600; }
+.copy-progress-track {
+  height: 8px;
+  margin: 14px 0 8px;
+  border-radius: 5px;
+  overflow: hidden;
+  background: var(--line);
+}
+.copy-progress-track i { display: block; height: 100%; border-radius: inherit; background: var(--selection); }
+.copy-progress[data-state="completed"] .copy-progress-track i { background: var(--policy); }
+.copy-progress-caption { font-size: 12px; color: var(--muted); }
+.copy-timing { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; padding-top: 18px; }
+.copy-timing dt { font-size: 11px; color: var(--muted); margin-bottom: 5px; }
+.copy-timing dd { margin: 0; font-size: 15px; font-weight: 500; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.resume-source { display: grid; gap: 9px; margin: 12px 0; padding: 14px; border-radius: 8px; border: 1px solid var(--selection); background: color-mix(in srgb, var(--selection) 7%, var(--panel)); }
+.resume-source > p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.resume-source > button { justify-self: start; }
+.simple-acquisition.focused-copy .acquisition-layout { display: block; overflow: auto; }
+.simple-acquisition.focused-copy .acquisition-history { height: auto; overflow: visible; border: 0; padding: 0; max-width: 1100px; margin: 0 auto; }
+.simple-acquisition.focused-copy .copy-progress { margin-top: 12px; }
+@media (max-width: 1120px) { .copy-timing { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 520px) { .copy-progress { padding: 12px; } .copy-progress-heading strong { font-size: 13px; } .copy-timing { gap: 14px; } .copy-timing dd { font-size: 13px; } }
+@media (prefers-reduced-motion: reduce) { .plot-live-cursor { transition: none !important; } }
 .simple-acquisition .source-choice button {
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -648,3 +688,5 @@
     flex-wrap: wrap;
   }
 }
+
+.acquisition-history > .section-heading .panel-actions { margin: 0; align-items: center; }

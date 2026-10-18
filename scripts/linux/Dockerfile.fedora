@@ -8,9 +8,9 @@ COPY --from=rust /usr/local/cargo /usr/local/cargo
 COPY --from=rust /usr/local/rustup /usr/local/rustup
 ENV PATH="/usr/local/cargo/bin:${PATH}" RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo CARGO_BUILD_JOBS=2
 RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
-RUN dnf install -y gcc gcc-c++ make pkgconf-pkg-config webkit2gtk4.1-devel gtk3-devel openssl-devel librsvg2-devel libappindicator-gtk3-devel libxdo-devel patchelf sleuthkit-devel sleuthkit ddrescue smartmontools usbutils pciutils systemd-udev udisks2 lzip curl ca-certificates python3 file rpm-build cpio && dnf clean all
+RUN dnf install -y gcc gcc-c++ make pkgconf-pkg-config webkit2gtk4.1-devel gtk3-devel openssl-devel librsvg2-devel libappindicator-gtk3-devel libxdo-devel patchelf sleuthkit-devel sleuthkit ddrescue smartmontools usbutils pciutils systemd-udev udisks2 lzip patch curl ca-certificates python3 file rpm-build cpio && dnf clean all
 RUN rustup component add clippy rustfmt
-FROM build AS source
+FROM build AS checks
 WORKDIR /work
 COPY . .
 RUN npm ci
@@ -18,7 +18,9 @@ RUN --mount=type=cache,id=drc-fedora-cargo,target=/usr/local/cargo/registry --mo
     npm test && \
     npm run rust:test && \
     npm run rust:check && \
-    python3 scripts/linux/test-faults.py && \
+    python3 scripts/linux/test-faults.py
+FROM checks AS source
+RUN --mount=type=cache,id=drc-fedora-cargo,target=/usr/local/cargo/registry --mount=type=cache,id=drc-fedora-target,target=/work/src-tauri/target,sharing=locked \
     npm run desktop:build:fedora && \
     package_version=$(node -p 'require("./package.json").version') && \
     package_release=$(node -p 'require("./src-tauri/tauri.fedora.conf.json").bundle.linux.rpm.release') && \

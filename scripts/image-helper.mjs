@@ -8,10 +8,12 @@ import {
 } from "node:fs";
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
+import { buildMacDdrescue } from "./macos/build-ddrescue.mjs";
 
 export async function buildImageHelper() {
   if (!["darwin", "linux"].includes(process.platform)) throw new Error("Image adapter builds currently support macOS and Linux.");
   const linux = process.platform === "linux";
+  if (!linux) buildMacDdrescue();
   if (linux) await new Promise((done, reject) => { const child = spawn("bash", [resolve(import.meta.dirname, "linux/build-ddrescue.sh")], { stdio: "inherit" }); child.on("error", reject); child.on("exit", code => code === 0 ? done() : reject(new Error(`GNU adapter build exited ${code}`))); });
   const root = resolve(import.meta.dirname, "../src-tauri");
   const include = linux ? "/usr/include" : "/opt/homebrew/include";

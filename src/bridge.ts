@@ -71,6 +71,7 @@ export const bridge = {
     request<string>("import_session_json", { json }),
   prepareAcquisition: (requestValue: AcquisitionRequest) =>
     request<AcquisitionPlan>("prepare_acquisition", { request: requestValue }),
+  openSourceAccessSettings: () => request<void>("open_source_access_settings"),
   cancelPlan: (ticket: string) =>
     request<void>("cancel_acquisition_plan", { ticket }),
   startAcquisition: (ticket: string, confirmation: string) =>
