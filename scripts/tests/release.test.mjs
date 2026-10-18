@@ -14,8 +14,8 @@ function fixture(t) {
   t.after(() => rmSync(base, { recursive: true, force: true }));
   mkdirSync(join(base, 'src-tauri'));
   mkdirSync(join(base, 'docs/images'), { recursive: true });
-  for (const file of versionFiles) copyFileSync(join(root, file), join(base, file));
-  writeFileSync(join(base, 'docs/README.template.md'), '# DRC {{version}}\n{{screenshots}}');
+  for (const file of [...versionFiles, 'src-tauri/build.rs']) copyFileSync(join(root, file), join(base, file));
+  writeFileSync(join(base, 'docs/README.template.md'), '# DRC {{version}}\n{{projectBadges}}\n{{technologyBadges}}\n{{screenshots}}');
   return base;
 }
 function screenshots(base, version) {
@@ -63,6 +63,50 @@ test('dry-run reports a release without changing files or making a tag', t => {
   release(['patch', '--dry-run'], base);
   assert.equal(currentVersion(base), currentVersion());
   assert.throws(() => release(['patch', '--publish', '--dry-run'], base), /Usage/);
+});
+test('standard README badges follow the project version and reject stale text', t => {
+  const base = fixture(t);
+  const original = currentVersion(base);
+  screenshots(base, original);
+  updateReadme(base);
+  const path = join(base, 'README.md');
+  assert(readFileSync(path, 'utf8').includes(`Source v${original}`));
+  const next = nextVersion(original, 'patch');
+  syncVersion(next, base);
+  screenshots(base, next);
+  updateReadme(base);
+  const svg = readFileSync(path, 'utf8');
+  assert(svg.includes(`Source v${next}`));
+  assert(!svg.includes(`Source v${original}`));
+  assert(svg.includes('macOS') && svg.includes('Linux'));
+  updateReadme(base, true);
+  writeFileSync(path, svg.replace(`Source v${next}`, `Source v${original}`));
+  assert.throws(() => updateReadme(base, true), /README is stale/);
+});
+test('README badges use locked package versions and actual language settings', t => {
+  const base = fixture(t);
+  screenshots(base, currentVersion(base));
+  updateReadme(base);
+  const lockPath = join(base, 'package-lock.json');
+  const lock = JSON.parse(readFileSync(lockPath, 'utf8'));
+  lock.packages['node_modules/react'].version = '99.1.2';
+  writeFileSync(lockPath, JSON.stringify(lock));
+  assert.throws(() => updateReadme(base, true), /README is stale/);
+  const cargoPath = join(base, 'src-tauri/Cargo.lock');
+  writeFileSync(cargoPath, readFileSync(cargoPath, 'utf8').replace(/(name = "tauri"\nversion = ")[^"]+("\n)/, '$19.8.7$2'));
+  const buildPath = join(base, 'src-tauri/build.rs');
+  writeFileSync(buildPath, readFileSync(buildPath, 'utf8').replace(/("-swift-version",\s*)"5"/, '$1"6"'));
+  updateReadme(base);
+  const svg = readFileSync(join(base, 'README.md'), 'utf8');
+  assert(svg.includes('React 99.1.2'));
+  assert(svg.includes('Tauri 9.8.7'));
+  assert(svg.includes('SwiftUI Swift 6 mode'));
+  assert(svg.includes('Rust edition 2021'));
+  assert(svg.includes('License GPL v3'));
+  assert(svg.includes('https://img.shields.io/static/v1?'));
+  assert(!svg.includes('docs/assets/stack.svg'));
+  assert(svg.includes('href="LICENSE"'));
+  updateReadme(base, true);
 });
 test('release commit and annotated tag reach an owned local remote atomically', t => {
   const base = fixture(t);

@@ -3,18 +3,17 @@
   <h1>DRC</h1>
   <p><strong>Disk Resource Console</strong></p>
   <p>Disk inspection, raw imaging and file recovery.</p>
-  <p><strong>Source v{{version}}</strong> · macOS · Linux</p>
   <p>
-    <a href="https://github.com/m7md-d/DRC/releases/latest"><img src="https://img.shields.io/github/v/release/m7md-d/DRC?label=Release&amp;style=flat-square&amp;labelColor=171D23&amp;color=2D9BEF" alt="Latest published release" /></a>
-    <a href="https://github.com/m7md-d/DRC/actions/workflows/linux.yml"><img src="https://github.com/m7md-d/DRC/actions/workflows/linux.yml/badge.svg" alt="Desktop package build status" /></a>
+{{projectBadges}}
   </p>
   <p>
-    <img src="docs/assets/stack.svg" width="588" height="32" alt="Built with Rust, Tauri, React, TypeScript and SwiftUI" />
+{{technologyBadges}}
   </p>
   <p>
     <a href="https://github.com/m7md-d/DRC/releases/latest">Downloads</a> ·
     <a href="docs/RELEASE-NOTES.md">Release notes</a> ·
-    <a href="docs/LINUX-INSTALL.md">Linux installation</a>
+    <a href="docs/LINUX-INSTALL.md">Linux installation</a> ·
+    <a href="LICENSE">GPL v3</a>
   </p>
 </div>
 

@@ -4,15 +4,23 @@
   <p><strong>Disk Resource Console</strong></p>
   <p>Disk inspection, raw imaging and file recovery.</p>
   <p>
-  <strong>Source v0.5.0</strong> · macOS · Linux
+    <a href="package.json"><img src="https://img.shields.io/static/v1?label=Source&amp;message=v0.5.0&amp;color=blue&amp;style=flat" alt="Source v0.5.0" /></a>
+    <a href="#install"><img src="https://img.shields.io/static/v1?label=macOS&amp;message=13%2B&amp;color=000000&amp;style=flat&amp;logo=apple&amp;logoColor=white" alt="macOS 13+" /></a>
+    <a href="docs/LINUX-INSTALL.md"><img src="https://img.shields.io/static/v1?label=Linux&amp;message=Debian+%2F+Fedora&amp;color=FCC624&amp;style=flat&amp;logo=linux&amp;logoColor=black" alt="Linux Debian / Fedora" /></a>
+    <a href="LICENSE"><img src="https://img.shields.io/static/v1?label=License&amp;message=GPL+v3&amp;color=blue&amp;style=flat" alt="License GPL v3" /></a>
   </p>
   <p>
-    <img src="docs/assets/stack.svg" width="588" height="32" alt="Built with Rust, Tauri, React, TypeScript and SwiftUI" />
+    <a href="src-tauri/Cargo.toml"><img src="https://img.shields.io/static/v1?label=Rust&amp;message=edition+2021&amp;color=000000&amp;style=flat&amp;logo=rust&amp;logoColor=white" alt="Rust edition 2021" /></a>
+    <a href="src-tauri/Cargo.lock"><img src="https://img.shields.io/static/v1?label=Tauri&amp;message=2.12.3&amp;color=FFC131&amp;style=flat&amp;logo=tauri&amp;logoColor=black" alt="Tauri 2.12.3" /></a>
+    <a href="package-lock.json"><img src="https://img.shields.io/static/v1?label=React&amp;message=19.3.0&amp;color=61DAFB&amp;style=flat&amp;logo=react&amp;logoColor=black" alt="React 19.3.0" /></a>
+    <a href="package-lock.json"><img src="https://img.shields.io/static/v1?label=TypeScript&amp;message=7.0.2&amp;color=3178C6&amp;style=flat&amp;logo=typescript&amp;logoColor=white" alt="TypeScript 7.0.2" /></a>
+    <a href="src-tauri/build.rs"><img src="https://img.shields.io/static/v1?label=SwiftUI&amp;message=Swift+5+mode&amp;color=F05138&amp;style=flat&amp;logo=swift&amp;logoColor=white" alt="SwiftUI Swift 5 mode" /></a>
   </p>
   <p>
     <a href="https://github.com/m7md-d/DRC/releases/latest">Downloads</a> ·
     <a href="docs/RELEASE-NOTES.md">Release notes</a> ·
-    <a href="docs/LINUX-INSTALL.md">Linux installation</a>
+    <a href="docs/LINUX-INSTALL.md">Linux installation</a> ·
+    <a href="LICENSE">GPL v3</a>
   </p>
 </div>
 

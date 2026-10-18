@@ -16,7 +16,7 @@ Omit `--publish` for local preparation. To publish that prepared version after r
 
 Before capturing, the driver checks storage navigation, opening both output tabs, intermediate animation frames and terminal preservation. Reduced Motion skips the animation-frame assertion.
 
-Screenshots and a version/hash manifest are stored in `docs/images/`. The README is generated from `docs/README.template.md`; edit that template, then run `npm run readme`. `npm run readme:check` rejects stale text, stale versions and changed image files. Captures are made locally before tagging, so Linux CI needs no display or screenshot permissions.
+Screenshots and a version/hash manifest are stored in `docs/images/`. The README is generated from `docs/README.template.md`; edit that template, then run `npm run readme`. Standard Shields.io badge URLs use the source version, npm/Cargo lockfiles and native language settings. `npm run readme:check` rejects stale text, badge versions and changed image files. Captures are made locally before tagging, so Linux CI needs no display or screenshot permissions.
 
 `npm run version:check` checks all current version fields. `npm run copy:check` rejects a small list of recurring filler phrases and oversized release notes. Text still needs a human review for meaning and accuracy.
 
