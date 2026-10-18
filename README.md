@@ -4,7 +4,7 @@
   <p><strong>Disk Resource Console</strong></p>
   <p>Disk inspection, raw imaging and file recovery.</p>
   <p>
-    <a href="package.json"><img src="https://img.shields.io/static/v1?label=Source&amp;message=v0.5.1&amp;color=blue&amp;style=flat" alt="Source v0.5.1" /></a>
+    <a href="package.json"><img src="https://img.shields.io/static/v1?label=Source&amp;message=v0.5.2&amp;color=blue&amp;style=flat" alt="Source v0.5.2" /></a>
     <a href="#install"><img src="https://img.shields.io/static/v1?label=macOS&amp;message=13%2B&amp;color=000000&amp;style=flat&amp;logo=apple&amp;logoColor=white" alt="macOS 13+" /></a>
     <a href="docs/LINUX-INSTALL.md"><img src="https://img.shields.io/static/v1?label=Linux&amp;message=Debian+%2F+Fedora&amp;color=FCC624&amp;style=flat&amp;logo=linux&amp;logoColor=black" alt="Linux Debian / Fedora" /></a>
     <a href="LICENSE"><img src="https://img.shields.io/static/v1?label=License&amp;message=GPL+v3&amp;color=blue&amp;style=flat" alt="License GPL v3" /></a>
