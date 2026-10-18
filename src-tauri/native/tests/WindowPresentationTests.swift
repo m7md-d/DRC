@@ -14,7 +14,7 @@ import AppKit
 }
 
 @main struct WindowPresentationTests {
-  @MainActor static func main() {
+  @MainActor static func main() async {
     _ = NSApplication.shared
     var checks = 0
     func check(_ condition: @autoclosure () -> Bool, _ message: String) {
@@ -87,21 +87,25 @@ import AppKit
       fixture.setContentSize(NSSize(width: 1400, height: 900))
       controller.layout()
       check(changes.count == 1, "A large ordinary window retains its window-control inset")
-      func notify(_ name: Notification.Name) {
+      func notify(_ name: Notification.Name) async {
         NotificationCenter.default.post(name: name, object: fixture)
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.02))
+        // The observer queues layout on the main dispatch queue. Wait behind
+        // that work instead of assuming a runner drains it within 20 ms.
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+          DispatchQueue.main.async { continuation.resume() }
+        }
       }
       for _ in 0..<3 {
         let before = changes.count
         fixture.reportedFullscreen = true
-        notify(NSWindow.didEnterFullScreenNotification)
+        await notify(NSWindow.didEnterFullScreenNotification)
         check(changes.count == before + 1 && changes.last!.1,
           "Fullscreen entry releases the inset on either control side")
-        notify(NSWindow.didUpdateNotification)
-        notify(NSWindow.didResizeNotification)
+        await notify(NSWindow.didUpdateNotification)
+        await notify(NSWindow.didResizeNotification)
         check(changes.count == before + 1, "Repeated native layout events do not restart the transition")
         fixture.reportedFullscreen = false
-        notify(NSWindow.didExitFullScreenNotification)
+        await notify(NSWindow.didExitFullScreenNotification)
         let button = fixture.standardWindowButton(.closeButton)!
         let inset = rightToLeft ? button.superview!.bounds.width - button.frame.maxX : button.frame.minX
         check(changes.count == before + 2 && !changes.last!.1 && inset == 16,

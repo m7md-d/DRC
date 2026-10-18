@@ -1,5 +1,10 @@
 # DRC verification — 15 October 2026
 
+## 0.5.1 release checks — 18 October 2026
+
+- Local release preparation passed 34 frontend, 18 release-script, 82 Rust, 31 native model, eight continuity and 40 window-presentation checks, plus Clippy with warnings denied. The macOS bundle and three native README captures were regenerated at 0.5.1; the generated image source was unchanged.
+- The first GitHub run passed metadata validation but failed the window-presentation test before reaching Rust checks. That test assumed a 20 ms run-loop delay would execute queued layout callbacks. It now awaits a main-dispatch-queue barrier after each notification, keeping every fullscreen and control-side assertion. The native suite and five repeated presentation runs (200 assertions) pass locally; remote validation is pending.
+
 ## Release gating and copy progress — 18 October 2026
 
 - `Checks` now runs on branch pushes, pull requests and manual dispatch. Successful default-branch checks trigger version selection for desktop packages. The package workflow creates an annotated tag at the checked commit only after its required builds succeed. Already published versions skip with a stated reason; unpublished tags cannot move. Local preparation pushes the version commit without creating a tag.
