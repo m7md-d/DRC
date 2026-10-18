@@ -1,5 +1,5 @@
 {
-  "version": "0.5.0",
+  "version": "0.5.1",
   "source": "native-desktop",
   "generatedImageUnchanged": true,
   "images": [
@@ -9,7 +9,7 @@
       "description": "Device capacity, connection readings and inspection or imaging controls.",
       "width": 1180,
       "height": 780,
-      "sha256": "062f7b6b9d38e6116d726edaaeb6c1d1943527a13beb6a287a66ae6a3a0e5bbc"
+      "sha256": "85b654e5884efc78d73e2ab2c7f2dc56cbe6e5d9523a4b156cf4293b2e0bbb8a"
     },
     {
       "file": "image-files.png",
@@ -17,7 +17,7 @@
       "description": "Allocated and deleted entries read from a generated FAT16 image through the normal image reader.",
       "width": 1180,
       "height": 780,
-      "sha256": "c4067ce1fe469edea29d6f880f4bd871733a1876b5786c0951d5672f4f03c001"
+      "sha256": "02d37327dc1dd66f1ac1f937b9608897c09f28af05e47e7ea9365f9be9c05e9d"
     },
     {
       "file": "command-reference.png",
@@ -25,7 +25,7 @@
       "description": "Linux installation commands, tool flags and copyable examples.",
       "width": 1180,
       "height": 780,
-      "sha256": "81c589a92279b7647e968f9a2c6c5ef2c63fc80671aa89cdc81e9f87151b21c1"
+      "sha256": "2c29979d7c027147ab10d9734b61e760623e84890a98b6d569742be025a81912"
     }
   ]
 }

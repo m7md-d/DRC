@@ -1,6 +1,6 @@
 [package]
 name = "drc"
-version = "0.5.0"
+version = "0.5.1"
 description = "Disk inspection, raw imaging and file recovery"
 authors = ["m7md-d"]
 edition = "2021"
