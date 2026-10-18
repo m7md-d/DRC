@@ -13,9 +13,12 @@ import type {
   AcquisitionJob,
   AcquisitionPlan,
   AcquisitionSettings,
+  AcquisitionRequest,
+  MountedAcquisitionSource,
   Device,
   Json,
 } from "./types";
+import { SourceMountNotice } from "./SourceMountNotice";
 
 const defaults: AcquisitionSettings = {
   offset: "0",
@@ -90,6 +93,22 @@ export function AcquisitionPanel({
   const [editedResume, setEditedResume] = useState(false);
   const [setupOpen, setSetupOpen] = useState(jobs.length === 0);
   const [resumeToken, setResumeToken] = useState<string | null>(null);
+  const [mountedSource, setMountedSource] = useState<{
+    source: MountedAcquisitionSource;
+    request: AcquisitionRequest;
+  } | null>(null);
+  useEffect(() => {
+    setMountedSource(null);
+  }, [
+    device?.token,
+    kind,
+    image,
+    destination,
+    settings,
+    chosen,
+    resumeToken,
+    editedResume,
+  ]);
   const job = jobs.find((j) => j.id === chosen) ?? jobs[0];
   const candidates = (devices.length ? devices : device ? [device] : []).filter(
     canAcquireDevice,
@@ -108,6 +127,7 @@ export function AcquisitionPanel({
     planRef.current = null;
     setPlan(null);
     setConfirmation("");
+    setMountedSource(null);
   }, []);
   const dismiss = useCallback(() => {
     discard();
@@ -131,10 +151,25 @@ export function AcquisitionPanel({
       setWorking(false);
     }
   }
-  async function prepare(resume?: AcquisitionJob) {
+  async function review(request: AcquisitionRequest) {
     discard();
+    const result = await bridge.prepareAcquisition(request);
+    if (result.state === "mounted") {
+      if (mounted.current) setMountedSource({ source: result, request });
+      return;
+    }
+    const next = result.plan;
+    if (!mounted.current) {
+      await bridge.cancelPlan(next.ticket);
+      return;
+    }
+    planRef.current = next;
+    setPlan(next);
+    setConfirmation("");
+  }
+  async function prepare(resume?: AcquisitionJob) {
     const source = resume?.source;
-    const next = await bridge.prepareAcquisition({
+    await review({
       kind: source?.kind ?? kind,
       imagePath: source?.kind === "image" ? source.path : image || null,
       deviceToken: (resume ? resumeDevice : device)?.token ?? null,
@@ -155,14 +190,19 @@ export function AcquisitionPanel({
         : settings,
       resumeJob: resume?.id ?? null,
     });
-    if (!mounted.current) {
-      await bridge.cancelPlan(next.ticket);
-      return;
-    }
-    planRef.current = next;
-    setPlan(next);
-    setConfirmation("");
   }
+  const mountNotice = mountedSource && (
+    <SourceMountNotice
+      source={mountedSource.source}
+      working={working || busy || active}
+      cancel={() => setMountedSource(null)}
+      proceed={() =>
+        void action(() =>
+          review({ ...mountedSource.request, unmountSource: true }),
+        )
+      }
+    />
+  );
   const readSettings = (resuming = false) => (
     <ModeDetails simple={simple && !resuming} title="Change copy settings">
       <div className="form-grid">
@@ -358,7 +398,7 @@ export function AcquisitionPanel({
   return (
     <WorkspacePanel
       title={simple ? "Create a disk image" : "Raw acquisition"}
-      subtitle="Read-only source · disk image and resume map"
+      subtitle="Read-only copy · disk image and resume map"
       close={dismiss}
       wide
       className={
@@ -438,6 +478,7 @@ export function AcquisitionPanel({
           className="acquisition-form"
           hidden={simple && !setupOpen && !plan && !!job}
         >
+          {!mountedSource?.request.resumeJob && mountNotice}
           <div className="section-heading">
             <h3>
               {plan
@@ -448,7 +489,7 @@ export function AcquisitionPanel({
                     : "Where should the image be saved?"
                   : "Source and destination"}
             </h3>
-            <span className="small-tag">NO SOURCE WRITES</span>
+            <span className="small-tag">READ-ONLY COPY</span>
           </div>
           {plan ? (
             <>
@@ -837,6 +878,7 @@ export function AcquisitionPanel({
           )}
         </section>
         <section className="acquisition-history">
+          {mountedSource?.request.resumeJob && mountNotice}
           <div className="section-heading">
             <h3>
               {simple ? "Copy progress and history" : "Saved acquisitions"}

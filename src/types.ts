@@ -209,7 +209,16 @@ export interface AcquisitionRequest {
   destination: string;
   settings: AcquisitionSettings;
   resumeJob: string | null;
+  unmountSource?: boolean;
 }
+export interface MountedAcquisitionSource {
+  state: "mounted";
+  deviceId: string;
+  deviceName: string;
+  volumes: { deviceId: string; mountPoint: string; readOnly: boolean }[];
+}
+export type AcquisitionPreparation =
+  { state: "ready"; plan: AcquisitionPlan } | MountedAcquisitionSource;
 export interface AcquisitionPlan {
   ticket: string;
   expiresAt: number;

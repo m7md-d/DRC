@@ -9,7 +9,7 @@ import type {
   SessionData,
   SessionSummary,
   AcquisitionRequest,
-  AcquisitionPlan,
+  AcquisitionPreparation,
   AcquisitionJob,
   ImageSource,
   ImageRequest,
@@ -70,7 +70,9 @@ export const bridge = {
   importSessionJson: (json: string) =>
     request<string>("import_session_json", { json }),
   prepareAcquisition: (requestValue: AcquisitionRequest) =>
-    request<AcquisitionPlan>("prepare_acquisition", { request: requestValue }),
+    request<AcquisitionPreparation>("prepare_acquisition", {
+      request: requestValue,
+    }),
   openSourceAccessSettings: () => request<void>("open_source_access_settings"),
   cancelPlan: (ticket: string) =>
     request<void>("cancel_acquisition_plan", { ticket }),

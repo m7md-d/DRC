@@ -2106,11 +2106,13 @@ export function App() {
               <div>
                 <strong>System-wide write protection: not established</strong>
                 <p>
-                  Physical acquisition refuses mounted sources. macOS holds a
+                  Copying requires unmounted source volumes. On macOS, source
+                  preparation can unmount them after your explicit selection;
+                  the OS may flush pending writes during that step. macOS holds a
                   Disk Arbitration mount veto; Linux holds an exclusive
                   read-only block-device handle during the operation. DRC does
-                  not block all writes from other applications. Existing mounts
-                  are unchanged; hardware write-blocker state is not verified.
+                  not block all writes from other applications. Hardware
+                  write-blocker state is not verified.
                 </p>
               </div>
             </div>

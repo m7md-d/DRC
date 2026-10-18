@@ -140,7 +140,10 @@ pub struct Plan {
     pub previous_source: Option<Source>,
 }
 
-fn resume_source_review(source: &Source, previous: &Job) -> Result<Option<Source>, String> {
+pub(crate) fn resume_source_review(
+    source: &Source,
+    previous: &Job,
+) -> Result<Option<Source>, String> {
     match (source, &previous.source) {
         (Source::Physical { device: current }, Source::Physical { device: original }) => {
             if current.size_bytes != original.size_bytes
@@ -237,7 +240,7 @@ pub fn decimal(value: &str, label: &str) -> Result<u64, String> {
         .map_err(|_| format!("{label} exceeds the supported integer range."))
 }
 
-fn validate_settings(settings: &mut Settings, total: u64) -> Result<(), String> {
+pub(crate) fn validate_settings(settings: &mut Settings, total: u64) -> Result<(), String> {
     if total > i64::MAX as u64 {
         return Err("The source capacity exceeds this host's signed file-offset range.".into());
     }

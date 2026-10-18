@@ -19,6 +19,8 @@ mod recovery;
 mod recovery_host;
 #[cfg(target_os = "macos")]
 mod registry_watch;
+#[cfg(target_os = "macos")]
+mod source_mounts;
 mod storage_observations;
 mod store;
 mod topology;
@@ -739,13 +741,26 @@ struct AcquireRequest {
     destination: String,
     settings: Settings,
     resume_job: Option<String>,
+    #[serde(default)]
+    unmount_source: bool,
 }
 
-fn physical_source(
-    app: &tauri::AppHandle,
-    state: &Runtime,
-    token: &str,
-) -> Result<(Device, std::fs::File, mount_guard::MountGuard), String> {
+#[derive(serde::Serialize)]
+#[serde(tag = "state", rename_all = "camelCase")]
+enum AcquisitionPreparation {
+    Ready {
+        plan: Box<Plan>,
+    },
+    #[cfg(target_os = "macos")]
+    #[serde(rename_all = "camelCase")]
+    Mounted {
+        device_id: String,
+        device_name: String,
+        volumes: Vec<source_mounts::MountedVolume>,
+    },
+}
+
+fn selected_physical_source(state: &Runtime, token: &str) -> Result<Device, String> {
     let device = state
         .devices
         .lock()
@@ -760,6 +775,15 @@ fn physical_source(
             .unwrap_or("Metadata-only medium".into()));
     }
     policy::require_acquisition(&device, &device.info)?;
+    Ok(device)
+}
+
+fn physical_source(
+    app: &tauri::AppHandle,
+    state: &Runtime,
+    token: &str,
+) -> Result<(Device, std::fs::File, mount_guard::MountGuard), String> {
+    let device = selected_physical_source(state, token)?;
     validate_physical(app, &device)?;
     let guard = mount_guard::MountGuard::acquire(&device.id)?;
     validate_physical(app, &device)?;
@@ -773,9 +797,19 @@ fn validate_physical(app: &tauri::AppHandle, device: &Device) -> Result<(), Stri
     policy::require_acquisition(device, &fresh)?;
     #[cfg(target_os = "linux")]
     linux::require_unmounted(&device.id)?;
-    // Inspect mounted volumes through metadata, including APFS physical stores.
-    // No unmount/repair is performed automatically because unmount itself may flush writes.
     #[cfg(target_os = "macos")]
+    if let Some(volume) = mounted_source_volumes(app, device)?.first() {
+        return Err(format!("Source volume is mounted at {}. In Create disk image, check the source and choose Unmount source and continue. Copying requires an unmounted source.", volume.mount_point));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn mounted_source_volumes(
+    app: &tauri::AppHandle,
+    device: &Device,
+) -> Result<Vec<source_mounts::MountedVolume>, String> {
+    // Resolve synthesized/APFS volumes to physical backing, not a BSD-name prefix.
     {
         let count = unsafe { libc::getfsstat(std::ptr::null_mut(), 0, libc::MNT_NOWAIT) };
         if count < 0 {
@@ -794,6 +828,7 @@ fn validate_physical(app: &tauri::AppHandle, device: &Device) -> Result<(), Stri
                 "Mounted-volume enumeration changed or failed. Prepare the source again.".into(),
             );
         }
+        let mut volumes = Vec::new();
         for mount in mounts.iter().take(count as usize) {
             let from =
                 unsafe { std::ffi::CStr::from_ptr(mount.f_mntfromname.as_ptr()) }.to_string_lossy();
@@ -804,11 +839,18 @@ fn validate_physical(app: &tauri::AppHandle, device: &Device) -> Result<(), Stri
                 unsafe { std::ffi::CStr::from_ptr(mount.f_mntonname.as_ptr()) }.to_string_lossy();
             let stores = path_stores(app, Path::new(path.as_ref()))?;
             if stores.contains(&device.id) {
-                return Err(format!("Source volume is mounted at {path}. DRC will not acquire a mounted source or unmount it automatically. Prepare an unmounted source outside the acquisition operation."));
+                if stores.len() != 1 {
+                    return Err(format!("Mounted volume {path} spans multiple physical disks. DRC cannot unmount this source as a single-disk preparation step."));
+                }
+                volumes.push(source_mounts::MountedVolume {
+                    device_id: from.trim_start_matches("/dev/").into(),
+                    mount_point: path.into_owned(),
+                    read_only: mount.f_flags & libc::MNT_RDONLY as u32 != 0,
+                });
             }
         }
+        Ok(volumes)
     }
-    Ok(())
 }
 
 #[tauri::command]
@@ -816,7 +858,7 @@ async fn prepare_acquisition(
     app: tauri::AppHandle,
     state: tauri::State<'_, Runtime>,
     request: AcquireRequest,
-) -> Result<Plan, String> {
+) -> Result<AcquisitionPreparation, String> {
     require_host()?;
     require_idle(&state)?;
     let _gate = state
@@ -835,6 +877,10 @@ async fn prepare_acquisition(
     } else {
         None
     };
+    let destination = old
+        .as_ref()
+        .map(|j| j.directory.as_str())
+        .unwrap_or(&request.destination);
     let (source, input, guard, total) = match request.kind.as_str() {
         "image" => {
             let path = request
@@ -874,7 +920,9 @@ async fn prepare_acquisition(
                 .device_token
                 .as_deref()
                 .ok_or("Select a current external source")?;
-            let (device, input, guard) = physical_source(&app, &state, token)?;
+            let device = selected_physical_source(&state, token)?;
+            let fresh = platform::read_info(&device.id, &mut |record| emit_record(&app, record))?;
+            policy::require_acquisition(&device, &fresh)?;
             if old.is_none()
                 && device
                     .info
@@ -893,6 +941,74 @@ async fn prepare_acquisition(
                     .ok_or("Source size is missing")?,
                 "Source size",
             )?;
+            let mut checked_settings = match &old {
+                Some(job) => {
+                    acquisition::resume_source_review(
+                        &Source::Physical {
+                            device: Box::new(device.clone()),
+                        },
+                        job,
+                    )?;
+                    acquisition::resume_settings(job, request.settings.clone())?
+                }
+                None => request.settings.clone(),
+            };
+            acquisition::validate_settings(&mut checked_settings, size)?;
+            if !size.is_multiple_of(u64::from(checked_settings.sector_size))
+                || !acquisition::decimal(checked_settings.length.as_deref().unwrap(), "Length")?
+                    .is_multiple_of(u64::from(checked_settings.sector_size))
+            {
+                return Err("The physical source and requested length must align with its logical sector size.".into());
+            }
+            // Check destination backing before any unmount. A path on the source,
+            // protected media or unresolved backing must never trigger preparation.
+            let before = admit_path(&app, &state, Path::new(destination), Some(&device.id), true)?;
+            #[cfg(target_os = "macos")]
+            let (device, input, guard) = {
+                for path in ["/", "/System/Volumes/Data", "/System/Volumes/VM"] {
+                    if Path::new(path).exists()
+                        && path_stores(&app, Path::new(path))?.contains(&device.id)
+                    {
+                        return Err(format!("Source backs the active system path {path}. Unmount and acquisition are excluded."));
+                    }
+                }
+                // Start the mount veto before inspecting or unmounting volumes;
+                // keep it through review and copying, with no gap for auto-mount.
+                let guard = mount_guard::MountGuard::acquire(&device.id)?;
+                let volumes = mounted_source_volumes(&app, &device)?;
+                if !volumes.is_empty() && !request.unmount_source {
+                    return Ok(AcquisitionPreparation::Mounted {
+                        device_id: device.id,
+                        device_name: device.name,
+                        volumes,
+                    });
+                }
+                if !volumes.is_empty() {
+                    let fresh =
+                        platform::read_info(&device.id, &mut |record| emit_record(&app, record))?;
+                    policy::require_acquisition(&device, &fresh)?;
+                    source_mounts::unmount(&device.id, &mut |record| emit_record(&app, record))?;
+                }
+                validate_physical(&app, &device)?;
+                let input = guard.open_source(&mut |record| emit_record(&app, record))?;
+                validate_physical(&app, &device)?;
+                (device, input, guard)
+            };
+            #[cfg(not(target_os = "macos"))]
+            let (device, input, guard) = {
+                if request.unmount_source {
+                    return Err(
+                        "In-app source unmount is currently available on macOS only.".into(),
+                    );
+                }
+                physical_source(&app, &state, token)?
+            };
+            let after = admit_path(&app, &state, Path::new(destination), Some(&device.id), true)?;
+            if before.device != after.device || before.inode != after.inode {
+                return Err(
+                    "The destination changed during source preparation. Select it again.".into(),
+                );
+            }
             (
                 Source::Physical {
                     device: Box::new(device),
@@ -904,10 +1020,6 @@ async fn prepare_acquisition(
         }
         _ => return Err("Unsupported acquisition source type".into()),
     };
-    let destination = old
-        .as_ref()
-        .map(|j| j.directory.as_str())
-        .unwrap_or(&request.destination);
     let source_id = match &source {
         Source::Physical { device } => Some(device.id.as_str()),
         _ => None,
@@ -918,7 +1030,7 @@ async fn prepare_acquisition(
     } else {
         request.settings
     };
-    state.acquisition.prepare(
+    let plan = state.acquisition.prepare(
         source,
         input,
         guard,
@@ -927,7 +1039,10 @@ async fn prepare_acquisition(
         total,
         old.as_ref(),
         Some(admitted),
-    )
+    )?;
+    Ok(AcquisitionPreparation::Ready {
+        plan: Box::new(plan),
+    })
 }
 
 #[tauri::command]

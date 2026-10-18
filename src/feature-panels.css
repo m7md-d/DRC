@@ -1537,3 +1537,36 @@
     min-height: 180px;
   }
 }
+.source-mount-notice {
+  padding: 16px;
+  margin-bottom: 18px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: var(--panel);
+}
+.source-mount-notice h3 {
+  margin: 0 0 8px;
+}
+.source-mount-notice p {
+  margin: 8px 0;
+}
+.source-mount-notice ul {
+  padding: 0;
+  list-style: none;
+}
+.source-mount-notice li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px 16px;
+  padding: 8px 0;
+}
+.source-mount-notice code {
+  overflow-wrap: anywhere;
+}
+.source-mount-notice li span {
+  color: var(--muted);
+}
+.source-mount-notice .panel-actions {
+  margin-top: 16px;
+}
