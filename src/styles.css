@@ -1,6 +1,6 @@
 @import url("./feature-panels.css") layer(features);
 
-/* DRC utility system · macOS proportions, evidence-first brand structure.
+/* DRC utility layout with compact macOS proportions.
    Feature panels only own their domain layouts; these rules own shared UI. */
 :root {
   color-scheme: dark;

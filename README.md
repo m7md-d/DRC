@@ -90,4 +90,4 @@ npm run rust:check
 npm run desktop
 ```
 
-[Release and screenshot scripts](docs/RELEASING.md) · [Writing rules](docs/COPY-STYLE.md) · [Brand](BRAND-SYSTEM.md)
+[Release and screenshot scripts](docs/RELEASING.md) · [Writing rules](docs/COPY-STYLE.md) · [Interface design](docs/DESIGN.md)

@@ -3,6 +3,8 @@ node_modules
 dist
 .tools
 .cache
+.private
+BRAND-SYSTEM.md
 src-tauri/target
 src-tauri/binaries
 DRC.app

@@ -6,11 +6,9 @@ The current feature and installation summary is in [README](../README.md) and [L
 
 The user is here to inspect connected storage, see every reported field and run explicitly selected queries from a standalone desktop application.
 
-## Brand decisions
+## Interface
 
-L1 structural identity with storage-specific L2 details. The canonical palette is `#090B0D`, `#111519`, `#30373E`, `#E1E5E8`, `#C0C8CF`, `#909AA3`. Space Grotesk provides headings; JetBrains Mono provides fields, paths, commands and timestamps. Fonts are bundled locally.
-
-The small byte signature is the brand's documented signature. There are no fabricated devices, health percentages, electrical readings, progress indicators or decorative offsets. The user's instructions override brand examples that propose inferred diagnoses or next actions.
+The current [interface design](DESIGN.md) uses compact controls, system typography and monospace for technical values. Displayed readings and progress must come from reported data.
 
 Interface copy is English. Localized names and string values reported by macOS are retained unchanged as source data.
 

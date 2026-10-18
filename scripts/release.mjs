@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { root, checkVersion, nextVersion, syncVersion, versionFiles } from './version.mjs';
 import { updateReadme } from './readme.mjs';
+import { checkPublicContent } from './public-content.mjs';
 
 export function command(program, args, cwd = root, capture = false) {
   return execFileSync(program, args, { cwd, encoding: 'utf8', stdio: capture ? ['ignore', 'pipe', 'pipe'] : 'inherit' });
@@ -37,6 +38,7 @@ export function release(args, base = root) {
   if (process.platform !== 'darwin') throw new Error('Prepare releases on macOS so the native screenshots can be captured. Linux packages are built by GitHub Actions.');
   const git = (a) => command('git', a, base, true).trim();
   if (git(['status', '--porcelain'])) throw new Error('Commit the current work before preparing a release. The script never commits unrelated edits.');
+  checkPublicContent(base);
   const branch = git(['symbolic-ref', '--short', 'HEAD']);
   if (!branch) throw new Error('Switch to a branch before preparing a release.');
   if (git(['tag', '--list', `v${target}`])) throw new Error(`Tag v${target} already exists.`);

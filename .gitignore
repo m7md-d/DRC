@@ -3,6 +3,8 @@ dist/
 target/
 .tools/
 .cache/
+/.private/
+/BRAND-SYSTEM.md
 .DS_Store
 *.log
 artifacts/

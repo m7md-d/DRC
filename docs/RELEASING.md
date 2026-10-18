@@ -20,4 +20,6 @@ Screenshots and a version/hash manifest are stored in `docs/images/`. The README
 
 `npm run version:check` checks all current version fields. `npm run copy:check` rejects a small list of recurring filler phrases and oversized release notes. Text still needs a human review for meaning and accuracy.
 
+`npm run public:check` rejects known internal reference files and links in public documents. Release preparation and CI run this check. Internal inputs stay in ignored local storage, outside Docker build contexts and application resources; review new files for private content before committing.
+
 The editable app icon is `public/drc-icon.svg`. Run `npm run icons` after editing it to generate the desktop formats and the matching README asset. Bug captures stay in ignored local storage.

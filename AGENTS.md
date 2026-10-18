@@ -1,6 +1,7 @@
 # DRC project rules
 
-- Product UI is English. Follow `BRAND-SYSTEM.md` with native macOS proportions and functional, clearly visible state colors.
+- Product UI is English. Follow `docs/DESIGN.md` with native macOS proportions and functional, clearly visible state colors.
+- Owner-supplied identity references are internal inputs. Keep originals in ignored local storage, excluded from Git, build contexts and packages. Do not publish, quote, link or describe the owner's personal identity system. Public design notes cover DRC's interface only.
 - Write direct, factual text in UI, tooltips, README and release notes. Name the action, result or limitation. No slogans, sales copy, motivational language, self-praise or generic LLM filler. Do not repeat the same warning across nearby elements.
 - Preserve exact readings, original tool output, error codes and uncertainty. Concise wording must not remove information needed to decide an operation or imply a hardware diagnosis.
 - README covers functions, installation and useful screenshots. Release notes list concrete changes and relevant breaking changes; test inventories belong in `docs/BUILD_CHECKS.md`.

@@ -2,11 +2,11 @@
 
 Design baseline: 17 October 2026. This is an implementation record, not the deferred user manual.
 
-## Product and brand interpretation
+## Product interface
 
 DRC is a work tool for inspecting storage, acquiring images and inspecting evidence. Visible copy names the object, operation, observation or failure. No slogans, welcome campaigns, artificial health scores or decorative terminal language.
 
-The owner's [brand system](../BRAND-SYSTEM.md) specifies structural identity at L1, with L2 only where technical evidence benefits. Its typography choices are adaptable. The implementation therefore uses the platform UI font for navigation and prose, JetBrains Mono for paths and exact machine values, quiet neutral surfaces, restrained state colors and inspectable original output. Recovery policy and exact source identity remain operational information rather than decoration.
+The [interface design](../docs/DESIGN.md) uses the platform UI font for navigation and prose, monospace for paths and exact values, neutral surfaces and clear state colors. Original output and source protections remain accessible beside the related operation.
 
 ## Audit and resulting structure
 

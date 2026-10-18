@@ -21,6 +21,7 @@ jobs:
       - run: npm run version:check
       - run: npm run readme:check
       - run: npm run copy:check
+      - run: npm run public:check
       - run: npm run release:test
   build:
     needs: metadata
