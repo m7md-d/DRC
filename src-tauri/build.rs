@@ -13,7 +13,12 @@ fn main() {
 
 fn build_native_menu() {
     use std::{path::PathBuf, process::Command};
-    let sources = ["native/MenuModels.swift", "native/MenuBar.swift"];
+    let sources = [
+        "native/MenuModels.swift",
+        "native/MenuBar.swift",
+        "native/WindowPresentation.swift",
+        "native/ReadmeCapture.swift",
+    ];
     for source in &sources {
         println!("cargo:rerun-if-changed={source}");
     }
@@ -70,7 +75,7 @@ fn build_native_menu() {
     println!("cargo:rustc-link-search=native={sdk}/usr/lib/swift");
     println!("cargo:rustc-link-search=native={}", out.display());
     println!("cargo:rustc-link-lib=static=drc_native_menu");
-    for framework in ["AppKit", "SwiftUI", "Charts"] {
+    for framework in ["AppKit", "SwiftUI", "Charts", "WebKit"] {
         println!("cargo:rustc-link-lib=framework={framework}");
     }
     println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/swift");

@@ -8,7 +8,7 @@ use std::{
 };
 use tauri::{
     menu::{Menu, MenuItem, Submenu},
-    Manager,
+    Emitter, Manager,
 };
 #[path = "cpu_sensors.rs"]
 mod cpu_sensors;
@@ -297,12 +297,27 @@ pub fn host() -> Value {
 }
 
 unsafe extern "C" {
+    fn drc_native_workspace_presentation(window: *mut c_void, callback: extern "C" fn(i32, i32));
     fn drc_native_menu_install(callback: extern "C" fn(i32, *const c_char));
     fn drc_native_menu_show();
     fn drc_native_menu_hide();
     fn drc_native_menu_receive(json: *const c_char);
 }
 static APP: OnceLock<tauri::AppHandle> = OnceLock::new();
+// One atomic snapshot keeps the initial query consistent with native events.
+static WINDOW_PRESENTATION: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+pub fn window_presentation() -> Value {
+    let state = WINDOW_PRESENTATION.load(std::sync::atomic::Ordering::Relaxed);
+    json!({"controlsSide": if state & 2 != 0 { "right" } else { "left" },
+        "fullscreen": state & 1 != 0})
+}
+extern "C" fn native_window_presentation(right: i32, fullscreen: i32) {
+    let state = (u8::from(right != 0) << 1) | u8::from(fullscreen != 0);
+    WINDOW_PRESENTATION.store(state, std::sync::atomic::Ordering::Relaxed);
+    if let Some(main) = APP.get().and_then(|app| app.get_webview_window("main")) {
+        let _ = main.emit("workspace-window-presentation", window_presentation());
+    }
+}
 static VISIBLE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static SAMPLING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -431,6 +446,9 @@ pub fn setup(app: &mut tauri::App) -> tauri::Result<()> {
         }
     });
     if let Some(main) = app.get_webview_window("main") {
+        unsafe {
+            drc_native_workspace_presentation(main.ns_window()?, native_window_presentation);
+        }
         let weak = main.clone();
         main.on_window_event(move |event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {

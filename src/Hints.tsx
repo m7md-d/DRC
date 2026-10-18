@@ -1,11 +1,21 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 const hints: Record<string, string> = {
-  Easy: "A visual workspace for inspecting a disk, creating its image and finding files. Source protection stays the same.",
+  Easy: "Inspect disks, create images and browse recovered files.",
   Professional:
     "Shows complete device fields, partitions, tool reports and raw command output.",
   Reference:
     "An offline command guide for macOS and Linux. Examples can be copied; they are never executed here.",
+  "Recovery checks":
+    "Check device detection, source access and a small sample read.",
+  "Run checks":
+    "Run the configured checks. Does not format, repair a filesystem or write to the source.",
+  Inspect:
+    "Read SMART/NVMe information for the selected disk without running a self-test.",
+  "Create image…":
+    "Choose the source and a separate destination, then review the raw-copy command.",
+  "Open image…":
+    "Open a raw disk image read-only to inspect partitions and recover files.",
   "Command reference":
     "Search tools, commands and flags for independent terminal use.",
   "Refresh port map":
@@ -84,13 +94,12 @@ function description(target: HTMLElement): string | null {
   );
   if (known) return known[1];
   if (label.startsWith("Close"))
-    return "Close this panel. Closing does not start an operation.";
+    return "Close this panel.";
   if (label.startsWith("Copy"))
-    return "Copy this displayed information to your clipboard. No command is executed.";
+    return "Copy the displayed text to the clipboard.";
   if (target.matches(".field-table td:first-child"))
     return "Original field path reported by the tool. Unknown properties are retained without interpretation.";
-  if (target.matches("h1,h2,h3,h4,.eyebrow,th"))
-    return ` ${label} · Reported information; full original fields remain available in Professional and command output.`.trim();
+
   return null;
 }
 export function Hints() {
@@ -103,12 +112,18 @@ export function Hints() {
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let current: HTMLElement | null = null;
+    let keyboardFocus = false;
+    const pointer = () => {
+      keyboardFocus = false;
+      hide();
+    };
     const hide = () => {
       clearTimeout(timer);
       current = null;
       setActive(null);
     };
     const show = (event: Event) => {
+      if (event.type === "focusin" && !keyboardFocus) return;
       const target =
         event.target instanceof Element
           ? event.target.closest<HTMLElement>(
@@ -139,10 +154,11 @@ export function Hints() {
     document.addEventListener("pointerover", show);
     document.addEventListener("focusin", show);
     document.addEventListener("focusout", hide);
-    document.addEventListener("pointerdown", hide);
+    document.addEventListener("pointerdown", pointer);
     window.addEventListener("resize", hide);
     window.addEventListener("scroll", hide, true);
     const key = (e: KeyboardEvent) => {
+      if (e.key === "Tab" || e.key.startsWith("Arrow")) keyboardFocus = true;
       if (e.key === "Escape") hide();
     };
     document.addEventListener("keydown", key);
@@ -151,7 +167,7 @@ export function Hints() {
       document.removeEventListener("pointerover", show);
       document.removeEventListener("focusin", show);
       document.removeEventListener("focusout", hide);
-      document.removeEventListener("pointerdown", hide);
+      document.removeEventListener("pointerdown", pointer);
       window.removeEventListener("resize", hide);
       window.removeEventListener("scroll", hide, true);
       document.removeEventListener("keydown", key);

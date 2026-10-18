@@ -71,7 +71,7 @@ describe("recovery progress", () => {
     expect(html).toContain("0xe00002c7");
     expect(html).toContain("Not run");
     expect(html).toContain("query-fixture");
-    expect(html).toContain("not disk coverage");
+    expect(html).toContain("disk coverage is not measured here");
     expect(html).not.toContain("Ready to choose");
   });
   it("a successful sample is explicitly limited to its observed range", () => {
@@ -81,7 +81,7 @@ describe("recovery progress", () => {
         showCommand={() => {}}
       />,
     );
-    expect(html).toContain("The rest of the disk has not been tested");
-    expect(html).toContain("destination and command review");
+    expect(html.replace(/\s+/g, " ")).toContain("The remaining disk has not been checked");
+    expect(html.replace(/\s+/g, " ")).toContain("Select a destination and review the command");
   });
 });

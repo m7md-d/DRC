@@ -132,3 +132,16 @@ pub fn menu_bar_open(
     }
     menu_bar_hide(app)
 }
+
+// Presentation metadata only; it grants no device or filesystem capability.
+#[tauri::command]
+pub fn window_presentation() -> serde_json::Value {
+    #[cfg(all(target_os = "macos", feature = "macos-menu-bar"))]
+    {
+        macos::window_presentation()
+    }
+    #[cfg(not(all(target_os = "macos", feature = "macos-menu-bar")))]
+    {
+        serde_json::json!({"controlsSide": "none", "fullscreen": false})
+    }
+}

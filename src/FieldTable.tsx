@@ -20,9 +20,10 @@ export function FieldTable({
 }) {
   const [filter, setFilter] = useState("");
   const [view, setView] = useState<"grouped" | "flat">("grouped");
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [expanded, setExpanded] = useState<Set<string> | null>(null);
   const fields = useMemo(() => flatten(value), [value]);
   const groups = useMemo(() => groupFields(value, grouping), [value, grouping]);
+  const canGroup = groups.length > 1;
   const visible = useMemo(
     () =>
       fields.filter((field) =>
@@ -38,8 +39,8 @@ export function FieldTable({
       <table className="field-table">
         <thead>
           <tr>
-            <th>FIELD / PATH</th>
-            <th>REPORTED VALUE</th>
+            <th>Field / path</th>
+            <th>Reported value</th>
           </tr>
         </thead>
         <tbody>
@@ -47,7 +48,11 @@ export function FieldTable({
             <tr key={field.path}>
               <td>{field.path}</td>
               <td className={field.value === null ? "muted" : ""}>
-                {isByteField(field.path, field.value) ? <ByteValue value={field.value}/> : displayValue(field.value)}
+                {isByteField(field.path, field.value) ? (
+                  <ByteValue value={field.value} />
+                ) : (
+                  displayValue(field.value)
+                )}
               </td>
             </tr>
           ))}
@@ -90,38 +95,70 @@ export function FieldTable({
             </button>
           )}
         </label>
-        <div className="view-switch" aria-label={`${title} layout`}>
-          {(["grouped", "flat"] as const).map((mode) => (
-            <button
-              key={mode}
-              aria-pressed={view === mode}
-              onClick={() => setView(mode)}
-            >
-              {mode === "grouped" ? "Grouped" : "Flat paths"}
-            </button>
-          ))}
-        </div>
+        {canGroup && (
+          <div className="view-switch" aria-label={`${title} layout`}>
+            {(["grouped", "flat"] as const).map((mode) => (
+              <button
+                key={mode}
+                aria-pressed={view === mode}
+                onClick={() => setView(mode)}
+              >
+                {mode === "grouped" ? "Grouped" : "Flat paths"}
+              </button>
+            ))}
+          </div>
+        )}
+        {canGroup && view === "grouped" && (
+          <button
+            className="text-button"
+            disabled={!!filter}
+            onClick={() =>
+              setExpanded(
+                expanded?.size === groups.length
+                  ? new Set()
+                  : new Set(groups.map((g) => g.id)),
+              )
+            }
+          >
+            {expanded?.size === groups.length ? "Collapse all" : "Expand all"}
+          </button>
+        )}
         <span>
           {visible.length} / {fields.length} matched
           {filter ? ` · ${fields.length - visible.length} filtered` : ""}
         </span>
       </div>
-      {view === "flat" ? (
+      {!canGroup || view === "flat" ? (
         table(visible)
       ) : (
         <div className="field-groups">
           {groups.map((group) => {
             const rows = group.fields.filter((f) => matching.has(f.path));
             if (!rows.length) return null;
-            const open = filter.length > 0 || !collapsed.has(group.id);
+            const defaultOpen =
+              grouping === "device"
+                ? ["identity", "capacity", "connection"].includes(group.id)
+                : groups.length <= 3 || group.id === "$";
+            const open =
+              filter.length > 0 ||
+              (expanded ? expanded.has(group.id) : defaultOpen);
             return (
               <section className="field-group" key={group.id}>
                 <button
                   className="field-group-heading"
                   aria-expanded={open}
                   onClick={() => {
-                    setCollapsed((previous) => {
-                      const next = new Set(previous);
+                    setExpanded((previous) => {
+                      const defaults = groups
+                        .filter((g) =>
+                          grouping === "device"
+                            ? ["identity", "capacity", "connection"].includes(
+                                g.id,
+                              )
+                            : groups.length <= 3 || g.id === "$",
+                        )
+                        .map((g) => g.id);
+                      const next = new Set(previous ?? defaults);
                       if (next.has(group.id)) next.delete(group.id);
                       else next.add(group.id);
                       return next;

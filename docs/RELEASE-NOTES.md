@@ -1,9 +1,13 @@
-DRC 0.4.3 strengthens imaging failure handling on macOS and Debian-family Linux. Valid partial maps retain their observed blocks and explicitly count bytes outside the recorded map. They cannot establish completion. Internal gaps and malformed maps remain rejected. Numeric exit status and termination signals are recorded separately.
+- Added a storage overview, device navigation and animated output tabs.
+- Added hub downstream ports, network-link states and display transports; consolidated duplicate readings.
+- Added Easy copy steps, file browsing, connection cards and task-based command navigation; mode changes preserve page, input and selection. Fixed the disk mode toggle.
+- Single-group tables omit the layout switch.
+- Native macOS menu bar monitor with continuous history and a unified port tree.
+- Fixed fullscreen toolbar spacing, including right-side macOS window controls.
+- Added Fedora RPM builds and merged Debian, Ubuntu and Mint command profiles.
+- Added version synchronization, native README screenshots and tagged-release automation.
+- Updated the app icon, README header and name: Disk Resource Console.
 
-Read-request size and maximum read-error controls are available for explicit review, including resume; original source/range/sector settings stay fixed. SMART information queries gain allowlisted manual transport choices for documented bridges. Selecting an option does not run a query, and DRC never cycles protocols automatically. Unsupported firmware and host pass-through remain visible as original tool results.
+macOS archives are ad-hoc signed, not notarized.
 
-A fixed q+Enter response aborts GNU 1.30 map-save prompts and is retained as raw stdin. Closing stdin alone was reproduced as a hang. A log write failure requests a controlled stop while continuing to drain output and preserving any healthy transcript. Final readable artifacts are inspected even after persistence errors. An image flush failure clears the trusted resume seal and cannot establish completion. The local attempt journal retains failure state when an external destination disappears or is replaced, and replacement paths are not written.
-
-The Debian amd64/arm64 builds run the expanded generated-file fault suite, including early EOF, EIO/ENXIO/ENODEV, interrupted/short/delayed reads, destination/mapfile ENOSPC and destination EIO, small requests and 4 KiB alignment. Recovery uses the same image/map after removing the injected fault and checks exact bytes and unchanged sources. Kernel read-only/exclusive tests and clean package installation remain separate gates. Evidence JSON accompanies the downloads.
-
-These checks use generated files and loop images. They do not validate damaged SSD firmware/NAND, real electrical instability, physical reconnects, UDisks2 desktop authentication or uninterruptible kernel calls. Successful read status cannot establish correctness of silently wrong controller data. Existing Easy/Professional views, port trees, charts and the offline command reference remain available. Read LINUX-INSTALL.md and verify SHA256SUMS before installing; run DRC as your ordinary desktop user.
+[Installation](https://github.com/m7md-d/DRC/blob/main/docs/LINUX-INSTALL.md) · [Test results and limitations](https://github.com/m7md-d/DRC/blob/main/docs/BUILD_CHECKS.md)

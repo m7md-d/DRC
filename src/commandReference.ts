@@ -1,57 +1,697 @@
 export type ReferenceOS = "macos" | "linux";
-export type LinuxFamily = "debian" | "ubuntu" | "mint"; // Distribution profile IDs.
-export const packageFamilies = { debian: { name: "Debian family", manager: "APT", install: "sudo apt update\nsudo apt install gddrescue smartmontools sleuthkit testdisk usbutils udev pciutils", flags: [["update", "Refresh package indexes."], ["install", "Install packages and required dependencies."]] as [string,string][] } };
-export const linuxProfiles = { debian: { name:"Debian", family:"debian" }, ubuntu: { name:"Ubuntu", family:"debian" }, mint: { name:"Linux Mint", family:"debian" } } as const;
-export type ReferenceCategory = "setup" | "identify" | "inspect" | "acquire" | "map" | "files" | "maintenance";
-export interface ReferenceCommand {
-  id: string; category: ReferenceCategory; title: string; tool: string;
-  effect: "metadata" | "source-read" | "destination-write" | "system-change" | "source-write";
-  command: string; description: string; flags: [string, string][]; note?: string; source: string;
+export type LinuxFamily = "debian" | "fedora";
+export function normalizeLinuxFamily(saved: string | null): LinuxFamily {
+  // Earlier versions stored Ubuntu and Mint separately despite identical commands.
+  return saved === "fedora" ? "fedora" : "debian";
 }
-export const categories: { id: ReferenceCategory; label: string; description: string }[] = [
-  { id: "setup", label: "Install & prepare", description: "Tools, versions and parameter names" },
-  { id: "identify", label: "Identify media", description: "Device paths, geometry and connection events" },
-  { id: "inspect", label: "Inspect readings", description: "SMART, transport and host reports" },
-  { id: "acquire", label: "Create an image", description: "Raw acquisition and controlled retries" },
-  { id: "map", label: "Review a mapfile", description: "Coverage, status symbols and completion" },
-  { id: "files", label: "Explore an image", description: "Partitions, filesystems and file extraction" },
-  { id: "maintenance", label: "Write operations", description: "Explicitly destructive reference commands" },
+export const packageFamilies = {
+  debian: {
+    name: "Debian family",
+    detail: "Debian · Ubuntu · Linux Mint · APT",
+    manager: "APT",
+    install:
+      "sudo apt update\nsudo apt install gddrescue smartmontools sleuthkit testdisk usbutils udev pciutils udisks2 util-linux exfatprogs",
+    description:
+      "Debian, Ubuntu and Linux Mint use the same APT commands here. The gddrescue package provides ddrescue and ddrescuelog. DRC's Linux package separately includes its bundled drc-ddrescue 1.30 adapter.",
+    flags: [
+      ["update", "Refresh package indexes."],
+      ["install", "Install packages and required dependencies."],
+    ] as [string, string][],
+    source: "https://packages.debian.org/bookworm/gddrescue",
+    packageCommand: "sudo apt install ./DRC_VERSION_ARCH.deb",
+    packageSource: "https://v2.tauri.app/distribute/debian/",
+  },
+  fedora: {
+    name: "Fedora",
+    detail: "Fedora · DNF · RPM",
+    manager: "DNF",
+    install:
+      "sudo dnf install ddrescue smartmontools sleuthkit testdisk usbutils systemd-udev pciutils udisks2 util-linux exfatprogs",
+    description:
+      "Fedora names the GNU package ddrescue; udev tools come from systemd-udev. DRC's RPM separately includes its bundled drc-ddrescue 1.30 adapter. This profile is for conventional DNF-based Fedora installations.",
+    flags: [
+      [
+        "install",
+        "Resolve and install the named packages from enabled repositories.",
+      ],
+    ] as [string, string][],
+    source: "https://packages.fedoraproject.org/pkgs/ddrescue/ddrescue/",
+    packageCommand: "sudo dnf install ./DRC-VERSION-RELEASE.ARCH.rpm",
+    packageSource: "https://v2.tauri.app/distribute/rpm/",
+  },
+};
+export type ReferenceCategory =
+  | "setup"
+  | "identify"
+  | "inspect"
+  | "acquire"
+  | "map"
+  | "files"
+  | "maintenance";
+export interface ReferenceCommand {
+  id: string;
+  category: ReferenceCategory;
+  title: string;
+  tool: string;
+  effect:
+    | "metadata"
+    | "source-read"
+    | "destination-write"
+    | "system-change"
+    | "source-write";
+  command: string;
+  description: string;
+  flags: [string, string][];
+  note?: string;
+  source: string;
+}
+export const categories: {
+  id: ReferenceCategory;
+  label: string;
+  description: string;
+}[] = [
+  {
+    id: "setup",
+    label: "Install & prepare",
+    description: "Tools, versions and parameter names",
+  },
+  {
+    id: "identify",
+    label: "Identify media",
+    description: "Device paths, geometry and connection events",
+  },
+  {
+    id: "inspect",
+    label: "Inspect readings",
+    description: "SMART, transport and host reports",
+  },
+  {
+    id: "acquire",
+    label: "Create an image",
+    description: "Raw acquisition and controlled retries",
+  },
+  {
+    id: "map",
+    label: "Review a mapfile",
+    description: "Coverage, status symbols and completion",
+  },
+  {
+    id: "files",
+    label: "Explore an image",
+    description: "Partitions, filesystems and file extraction",
+  },
+  {
+    id: "maintenance",
+    label: "Write operations",
+    description: "Explicitly destructive reference commands",
+  },
 ];
-export const effects: Record<ReferenceCommand["effect"], string> = { metadata: "Metadata query", "source-read": "Reads source", "destination-write": "Writes destination", "system-change": "Changes system", "source-write": "WRITES SOURCE" };
+export const effects: Record<ReferenceCommand["effect"], string> = {
+  metadata: "Metadata query",
+  "source-read": "Reads source",
+  "destination-write": "Writes destination",
+  "system-change": "Changes system",
+  "source-write": "WRITES SOURCE",
+};
 const gnu = "https://www.gnu.org/software/ddrescue/manual/ddrescue_manual.html";
-const tsk = (tool: string) => `https://www.sleuthkit.org/sleuthkit/man/${tool}.html`;
+const tsk = (tool: string) =>
+  `https://www.sleuthkit.org/sleuthkit/man/${tool}.html`;
 const man = (tool: string) => `https://manpages.debian.org/bookworm/${tool}`;
-export function referenceCommands(os: ReferenceOS, family: LinuxFamily): ReferenceCommand[] {
+export function referenceCommands(
+  os: ReferenceOS,
+  family: LinuxFamily,
+): ReferenceCommand[] {
   const mac = os === "macos";
   const dd = "ddrescue";
-  const profile = linuxProfiles[family];
-  const installer = packageFamilies[profile.family];
+  const installer = packageFamilies[family];
   return [
-    { id: "install", category: "setup", title: mac ? "Install the command-line tools" : `Install tools · ${profile.name}`, tool: mac ? "Homebrew" : installer.manager, effect: "system-change", command: mac ? "brew install ddrescue smartmontools sleuthkit testdisk" : installer.install, description: mac ? "Requires an existing Homebrew installation. DRC's image adapter is bundled; these packages also provide standalone tools." : "gddrescue installs the ddrescue command. The DRC .deb separately bundles drc-ddrescue 1.30 for its verified acquisition adapter.", flags: mac ? [["install", "Install the named formulae."]] : installer.flags, note: "Package-manager tools may create services such as smartd. Review your system's package configuration. Do not run the DRC application with sudo.", source: mac ? "https://formulae.brew.sh/formula/ddrescue" : "https://packages.debian.org/bookworm/gddrescue" },
-    { id: "versions", category: "setup", title: "Check installed versions", tool: "Tool versions", effect: "metadata", command: `${dd} --version\nsmartctl --version\nfls -V`, description: "DRC acquisition requires GNU ddrescue 1.30. Distribution ddrescue versions may differ; --no-sweep requires 1.30. If DRC is installed, drc-ddrescue is its separately bundled Linux command.", flags: [["--version", "Print program version and exit."], ["-V", "Sleuth Kit version."]], source: gnu },
-    { id: "smart-transport", category: "inspect", title: "Choose a documented SMART bridge protocol", tool: "smartctl", effect: "source-read", command: 'SMART_TYPE=\'REPLACE_WITH_DOCUMENTED_TYPE\'\nsmartctl -a -j -d "${SMART_TYPE}" "${SOURCE}"', description: "SAT is for ATA/SATA pass-through; sntasmedia, sntjmicron and sntrealtek are vendor NVMe pass-through. An M.2 form factor does not identify SATA versus NVMe.", flags: [["-d TYPE", "Select the documented device/bridge transport."], ["-a -j", "Read standard information in JSON; no self-test."]], note: "No automatic mode cycling. Firmware and host support matter; macOS SCSI pass-through has additional limitations. An unsupported command does not establish failed NAND or a dead controller.", source: "https://github.com/smartmontools/smartmontools/blob/main/src/smartctl.8.in" },
-    { id: "small-reads", category: "acquire", title: "Smaller copying requests and an error-count limit", tool: "GNU ddrescue", effect: "destination-write", command: `${dd} --sector-size=REPLACE_WITH_LOGICAL_SECTOR_BYTES --cluster-size=1 --max-read-errors=5 --no-trim --no-sweep --no-scrape --retry-passes=0 --timeout=30s -- "\${SOURCE}" "\${IMAGE}" "\${MAP}"`, description: "An explicit alternative when large transfers fail. Select the reported logical sector size. Reuse the matching image/map and original range for resume.", flags: [["--cluster-size=1", "One logical sector per copying request; can reduce throughput."], ["--max-read-errors=5", "Stop when read errors exceed five; not a bad-sector count."], ["--sector-size", "Logical sector bytes, not the physical allocation size."]], note: "This does not bound an outstanding kernel call. DRC offers these controls after review; no automatic strategy switch or device reopen is performed.", source: gnu },
-    { id: "destination-error", category: "map", title: "Review ENOSPC, quota and destination I/O failures", tool: "df / ddrescuelog", effect: "metadata", command: 'df -Pk /REPLACE/WITH/DESTINATION_FOLDER\nddrescuelog --show-status "${MAP}"', description: "Check destination capacity and the original map separately from source read errors. A stale or incomplete map cannot establish completion, even when the image has full length.", flags: [["df -Pk", "Portable filesystem capacity report in 1024-byte units."], ["--show-status", "Display recorded map status counts."]], note: "Do not discard the image or replace its map with an unrelated one. Standalone ddrescue may request input after a map write failure; DRC supplies q+Enter only for the fixed map-save abort prompt and records that input; readable artifacts remain available. A backup map is not adopted automatically.", source: gnu },
-    { id: "parameters", category: "setup", title: "Set your own paths", tool: "Shell variables", effect: "system-change", command: `SOURCE_ID='REPLACE_WITH_DEVICE_ID'\nSOURCE='/dev/REPLACE_WITH_DEVICE'\nIMAGE='/absolute/destination/image.raw'\nMAP='/absolute/destination/rescue.map'\nOFFSET='REPLACE_WITH_START_SECTOR'\nINODE='REPLACE_WITH_INODE'`, description: mac ? "SOURCE_ID is a whole-disk identifier such as diskN; SOURCE uses the corresponding raw rdiskN node for acquisition. IMAGE and MAP belong on another disk." : "Use the exact whole-device path reported by lsblk. IMAGE and MAP belong on another disk. OFFSET is a sector count, not bytes.", flags: [["SOURCE", "Source medium to read; verify its identity every reconnect."], ["IMAGE / MAP", "Matching destination image and persistent mapfile."], ["OFFSET / INODE", "Values obtained from partition and directory reports."]], note: "Examples contain placeholders. Replace and verify every path before using your own terminal. The reference never runs commands.", source: "https://www.gnu.org/software/bash/manual/bash.html#Shell-Parameters" },
-    mac ? { id: "list", category: "identify", title: "List physical media", tool: "diskutil", effect: "metadata", command: "diskutil list -plist physical", description: "Structured physical-device enumeration, separate from synthesized volumes.", flags: [["list", "List devices and their partition entries."], ["-plist", "Return a property list."], ["physical", "Restrict enumeration to physical disks."]], source: "man diskutil · installed macOS manual" } : { id: "list", category: "identify", title: "List block devices with exact sizes", tool: "lsblk", effect: "metadata", command: "lsblk --json --bytes --output NAME,KNAME,TYPE,SIZE,LOG-SEC,PHY-SEC,RO,RM,TRAN,MODEL,SERIAL,FSTYPE,LABEL,UUID,MOUNTPOINTS", description: "Explicit columns avoid changing default output. Child entries retain device relationships.", flags: [["--json", "Structured JSON output."], ["--bytes", "Sizes in bytes."], ["--output", "Request named columns explicitly."], ["RO / RM", "Kernel read-only and removable attributes, not DRC policy."]], note: "lsblk uses sysfs and udev; without udev information it can fall back to filesystem probing.", source: man("util-linux/lsblk.8.en.html") },
-    mac ? { id: "info", category: "identify", title: "Read a device descriptor", tool: "diskutil", effect: "metadata", command: 'diskutil info -plist "${SOURCE_ID}"', description: "Read the selected device's reported geometry, protocol and properties.", flags: [["info", "Query one device."], ["-plist", "Preserve named structured fields."]], source: "man diskutil · installed macOS manual" } : { id: "info", category: "identify", title: "Read udev device properties", tool: "udevadm", effect: "metadata", command: 'udevadm info --query=property --name="${SOURCE}"', description: "Retain the complete udev property report, including bridge and vendor identifiers when available.", flags: [["info", "Query the device database."], ["--query=property", "List stored key/value properties."], ["--name", "Select the device node."]], source: man("udev/udevadm.8.en.html") },
-    { id: "watch", category: "identify", title: "Observe connection events", tool: mac ? "diskutil" : "udevadm", effect: "metadata", command: mac ? "diskutil activity" : "udevadm monitor --udev --subsystem-match=block", description: "Receive device events; this is not a surface scan. Stop with Ctrl+C.", flags: mac ? [["activity", "Subscribe to Disk Arbitration activity."]] : [["--udev", "Observe processed udev events."], ["--subsystem-match=block", "Filter to block devices."]], source: mac ? "man diskutil · installed macOS manual" : man("udev/udevadm.8.en.html") },
-    { id: "smart", category: "inspect", title: "Read SMART / NVMe attributes", tool: "smartctl", effect: "source-read", command: 'smartctl -a -j "${SOURCE}"', description: "Report device attributes. Bridge support and OS permissions determine what is available; an unavailable report is not a diagnosis.", flags: [["-a", "All standard SMART/device information."], ["-j", "JSON output."], ["-d TYPE", "Explicit bridge/device type when known; check smartctl -h."]], note: "Exit status is a bitmask, not a simple health score. A self-test (-t) causes device activity and is separate from reading an existing report.", source: man("smartmontools/smartctl.8.en.html") },
-    ...(mac ? [{id:"usb-host-ports",category:"inspect",title:"USB host ports and counters",tool:"ioreg",effect:"metadata",command:"ioreg -a -r -c AppleUSBHostPort -l",description:"Read the original host-port nodes, power allocations, port statistics and link-error counters. High-speed and SuperSpeed logical ports are separate reported nodes; no electrical measurement or diagnosis is inferred.",flags:[["-a","Archive output as a property list."],["-r","Show subtrees rooted at the matching class."],["-c AppleUSBHostPort","Read matching USB host-port objects."],["-l","Include their reported properties."]],source:"ioreg -h · installed macOS command help"} as ReferenceCommand] : []),
-    ...(mac ? [{id:"usb-registry",category:"inspect",title:"USB registry hierarchy",tool:"ioreg",effect:"metadata",command:"ioreg -a -p IOUSB -l",description:"Original USB-plane parent/child hierarchy and device properties. Power-state fields and declared current budgets do not measure power reaching an SSD inside an enclosure.",flags:[["-a","Archive the output as a property list."],["-p IOUSB","Traverse the USB registry plane."],["-l","Include reported object properties."]],note:"No reset, sector read or controller change. Retain the original output when no storage media is reported.",source:"ioreg -h · installed macOS command help"} as ReferenceCommand] : []),
-    { id: "connection", category: "inspect", title: mac ? "USB / Thunderbolt host report" : "USB topology and negotiated speed", tool: mac ? "system_profiler" : "lsusb", effect: "metadata", command: mac ? "system_profiler -json SPUSBDataType SPThunderboltDataType SPNVMeDataType" : "lsusb -t", description: mac ? "Host-reported connection and declared power properties. Declared current is not live electrical consumption." : "USB topology with reported speed. It is not measured read throughput or current draw.", flags: mac ? [["-json", "JSON report."], ["SPUSBDataType", "USB host information."], ["SPThunderboltDataType", "Thunderbolt host information."], ["SPNVMeDataType", "NVMe host storage properties."]] : [["-t", "Physical USB device hierarchy."]], source: mac ? "man system_profiler · installed macOS manual" : man("usbutils/lsusb.8.en.html") },
-    ...(!mac ? [{ id:"pci", category:"inspect" as const,title:"Inspect PCIe and controller presence",tool:"pciutils / sysfs",effect:"metadata" as const,command:"lspci -nnk\ncat /sys/class/nvme/REPLACE_WITH_CONTROLLER/state",description:"Bus and controller observations may exist even when no namespace appears in lsblk.",flags:[["-nn","Keep numeric PCI vendor/device IDs."],["-k","Show the reported kernel driver."]] as [string,string][],note:"A live controller is not proof of readable sectors; no association or fault cause is inferred.",source:"https://manpages.debian.org/bookworm/pciutils/lspci.8.en.html"},{id:"kernel",category:"inspect" as const,title:"Preserve kernel messages",tool:"dmesg",effect:"metadata" as const,command:"dmesg --json",description:"Retain original kernel observations, including I/O errors, timeouts and connection events.",flags:[["--json","Structured output; access depends on kernel-log permissions."]] as [string,string][],note:"Missing logs do not establish that no power transition or hardware fault occurred.",source:"https://manpages.debian.org/bookworm/util-linux/dmesg.1.en.html"}] : []),
-    { id: "copy", category: "acquire", title: "Copying phase · GNU 1.30", tool: "GNU ddrescue", effect: "destination-write", command: `${dd} --no-trim --no-sweep --no-scrape --retry-passes=0 --timeout=30s --log-rates=rates.log -- "\${SOURCE}" "\${IMAGE}" "\${MAP}"`, description: "Read the source into an image with a persistent mapfile. Reuse the matching image and mapfile when resuming.", flags: [["--no-trim", "Skip trimming."], ["--no-sweep", "Skip sweeping (1.30)."], ["--no-scrape", "Skip scraping; -n alone still allows other phases."], ["--retry-passes=0", "No retry passes."], ["--timeout=30s", "Elapsed time since a successful read; blocked I/O may delay exit."], ["--log-rates", "Store rates; buffered output may arrive later."], ["--", "End option parsing before paths."]], note: "Writes IMAGE and MAP. Keep the source unmounted. Do not add --force for ordinary image output. DRC uses an inherited read-only descriptor rather than reopening SOURCE.", source: gnu },
-    { id: "retry", category: "acquire", title: "Resume with one retry pass", tool: "GNU ddrescue", effect: "destination-write", command: `${dd} --retry-passes=1 --timeout=30s -- "\${SOURCE}" "\${IMAGE}" "\${MAP}"`, description: "Enable rescue phases and one retry pass using the same acquisition pair.", flags: [["--retry-passes=1 / -r1", "One retry pass."], ["--reverse / -R", "Reverse all reading passes."], ["--input-position / -i", "Start byte offset."], ["--output-position / -o", "Output byte offset."], ["--size / -s", "Maximum requested byte range."], ["--sector-size / -b", "Logical sector size in bytes."], ["--max-read-rate", "Limit requested read rate."]], note: "Extra reads can stress unstable media. The reference does not choose retries or direction for you. Preserve offsets and the matching mapfile.", source: gnu },
-    { id: "map", category: "map", title: "Inspect rescue coverage", tool: "ddrescuelog", effect: "metadata", command: 'ddrescuelog --show-status "${MAP}"\nddrescuelog --done-status "${MAP}"', description: "Review map status; file length alone is insufficient.", flags: [["--show-status / -t", "Show mapfile status counts."], ["--done-status / -D", "Exit zero if the checked domain is finished."], ["+ / ?", "Finished / not tried."], ["*", "Not trimmed."], ["/", "Not scraped."], ["-", "Bad sector."]], note: "Check the intended domain and image length too. Completion does not verify file contents or true device capacity.", source: gnu },
-    { id: "partitions", category: "files", title: "Find partition start sectors", tool: "mmls", effect: "source-read", command: 'mmls -b 512 "${IMAGE}"', description: "List partition extents in image sectors. Use the correct sector size.", flags: [["-b", "Underlying logical sector size in bytes."], ["-o", "Volume-system start sector, if nested."]], source: tsk("mmls") },
-    { id: "fs", category: "files", title: "Read filesystem metadata", tool: "fsstat", effect: "source-read", command: 'fsstat -b 512 -o "${OFFSET}" "${IMAGE}"', description: "Inspect the filesystem at a reviewed partition offset. Auto-detection covers supported filesystems, including Windows disk formats.", flags: [["-o", "Filesystem start sector."], ["-b", "Image logical sector size."], ["-f", "Explicit filesystem type; -f list lists supported types."]], source: tsk("fsstat") },
-    { id: "files", category: "files", title: "List files and deleted entries", tool: "fls", effect: "source-read", command: 'fls -l -b 512 -o "${OFFSET}" "${IMAGE}"', description: "List filesystem entries. A deleted entry does not establish recoverability.", flags: [["-l", "Long listing with metadata."], ["-d / -u", "Deleted only / allocated only."], ["-r", "Recursive listing; can produce substantial I/O."], ["-o", "Filesystem start sector."], ["INODE", "Optional directory address for a single folder."]], source: tsk("fls") },
-    { id: "inode", category: "files", title: "Inspect a file's metadata", tool: "istat", effect: "source-read", command: 'istat -b 512 -o "${OFFSET}" "${IMAGE}" "${INODE}"', description: "Read the addressed file's metadata before extracting its content.", flags: [["-o", "Filesystem start sector."], ["INODE", "Metadata address from a listing; NTFS may use address-type-id syntax."]], source: tsk("istat") },
-    { id: "extract", category: "files", title: "Extract one file without overwriting", tool: "icat", effect: "destination-write", command: '(set -C; icat -b 512 -o "${OFFSET}" "${IMAGE}" "${INODE}" > recovered.bin)', description: "Write original file bytes to a new output file. Shell noclobber refuses an existing destination.", flags: [["-o / -b", "Filesystem offset / sector size."], ["-r", "Enable deleted-file recovery mode when appropriate."], ["set -C", "Shell noclobber for the redirection."], [">", "Redirect raw bytes to the destination."]], note: "Review stderr and exit status. Partial output can remain after failure. Do not treat an output file's existence as successful recovery.", source: tsk("icat") },
-    mac ? { id: "format", category: "maintenance", title: "Erase and create an exFAT disk", tool: "diskutil", effect: "source-write", command: 'diskutil eraseDisk ExFAT RECOVERED GPT "${SOURCE_ID}"', description: "Destroys the selected source's partition layout and creates a new filesystem. This is not a recovery step.", flags: [["eraseDisk", "Erase the entire selected disk."], ["ExFAT", "New filesystem."], ["GPT", "New partition scheme."]], note: "Never use on a source whose data you still need. Write operations are reference-only; DRC's backend does not execute them.", source: "man diskutil · installed macOS manual" } : { id: "format", category: "maintenance", title: "Create exFAT on a chosen partition", tool: "mkfs.exfat", effect: "source-write", command: 'sudo mkfs.exfat -L RECOVERED /dev/REPLACE_WITH_DESTINATION_PARTITION', description: "Overwrites filesystem structures on the chosen partition. Install exfatprogs separately when needed.", flags: [["-L", "Set the new volume label."], ["PARTITION", "Exact destination partition, not the source disk."]], note: "Destructive and reference-only. Preserve recovery images first. DRC's backend does not execute this command.", source: man("exfatprogs/mkfs.exfat.8.en.html") },
+    {
+      id: "install",
+      category: "setup",
+      title: mac
+        ? "Install the command-line tools"
+        : `Install tools · ${installer.name}`,
+      tool: mac ? "Homebrew" : installer.manager,
+      effect: "system-change",
+      command: mac
+        ? "brew install ddrescue smartmontools sleuthkit testdisk"
+        : installer.install,
+      description: mac
+        ? "Requires an existing Homebrew installation. DRC's image adapter is bundled; these packages also provide standalone tools."
+        : installer.description,
+      flags: mac
+        ? [["install", "Install the named formulae."]]
+        : installer.flags,
+      note: "Package-manager tools may create services such as smartd. Review your system's package configuration. Do not run the DRC application with sudo.",
+      source: mac
+        ? "https://formulae.brew.sh/formula/ddrescue"
+        : installer.source,
+    },
+    ...(!mac
+      ? [
+          {
+            id: "install-drc",
+            category: "setup",
+            title: "Install the downloaded DRC package",
+            tool: installer.manager,
+            effect: "system-change",
+            command: installer.packageCommand,
+            description:
+              "Choose the package for your system and architecture from the same DRC release, verify its published checksum, then replace this filename. The package manager resolves runtime dependencies.",
+            flags: [
+              [
+                "install ./FILE",
+                "Install a reviewed local package and resolve its dependencies.",
+              ],
+            ],
+            note:
+              family === "fedora"
+                ? "Launch DRC as your normal desktop user. Fedora Atomic/Silverblue/Kinoite use a different installation model and are not covered by this DNF profile."
+                : "Launch DRC as your normal desktop user.",
+            source: installer.packageSource,
+          } as ReferenceCommand,
+        ]
+      : []),
+    {
+      id: "versions",
+      category: "setup",
+      title: "Check installed versions",
+      tool: "Tool versions",
+      effect: "metadata",
+      command: `${dd} --version\nsmartctl --version\nfls -V`,
+      description:
+        "DRC acquisition requires GNU ddrescue 1.30. Distribution ddrescue versions may differ; --no-sweep requires 1.30. If DRC is installed, drc-ddrescue is its separately bundled Linux command.",
+      flags: [
+        ["--version", "Print program version and exit."],
+        ["-V", "Sleuth Kit version."],
+      ],
+      source: gnu,
+    },
+    {
+      id: "smart-transport",
+      category: "inspect",
+      title: "Choose a documented SMART bridge protocol",
+      tool: "smartctl",
+      effect: "source-read",
+      command:
+        'SMART_TYPE=\'REPLACE_WITH_DOCUMENTED_TYPE\'\nsmartctl -a -j -d "${SMART_TYPE}" "${SOURCE}"',
+      description:
+        "SAT is for ATA/SATA pass-through; sntasmedia, sntjmicron and sntrealtek are vendor NVMe pass-through. An M.2 form factor does not identify SATA versus NVMe.",
+      flags: [
+        ["-d TYPE", "Select the documented device/bridge transport."],
+        ["-a -j", "Read standard information in JSON; no self-test."],
+      ],
+      note: "No automatic mode cycling. Firmware and host support matter; macOS SCSI pass-through has additional limitations. An unsupported command does not establish failed NAND or a dead controller.",
+      source:
+        "https://github.com/smartmontools/smartmontools/blob/main/src/smartctl.8.in",
+    },
+    {
+      id: "small-reads",
+      category: "acquire",
+      title: "Smaller copying requests and an error-count limit",
+      tool: "GNU ddrescue",
+      effect: "destination-write",
+      command: `${dd} --sector-size=REPLACE_WITH_LOGICAL_SECTOR_BYTES --cluster-size=1 --max-read-errors=5 --no-trim --no-sweep --no-scrape --retry-passes=0 --timeout=30s -- "\${SOURCE}" "\${IMAGE}" "\${MAP}"`,
+      description:
+        "An explicit alternative when large transfers fail. Select the reported logical sector size. Reuse the matching image/map and original range for resume.",
+      flags: [
+        [
+          "--cluster-size=1",
+          "One logical sector per copying request; can reduce throughput.",
+        ],
+        [
+          "--max-read-errors=5",
+          "Stop when read errors exceed five; not a bad-sector count.",
+        ],
+        [
+          "--sector-size",
+          "Logical sector bytes, not the physical allocation size.",
+        ],
+      ],
+      note: "This does not bound an outstanding kernel call. DRC offers these controls after review; no automatic strategy switch or device reopen is performed.",
+      source: gnu,
+    },
+    {
+      id: "destination-error",
+      category: "map",
+      title: "Review ENOSPC, quota and destination I/O failures",
+      tool: "df / ddrescuelog",
+      effect: "metadata",
+      command:
+        'df -Pk /REPLACE/WITH/DESTINATION_FOLDER\nddrescuelog --show-status "${MAP}"',
+      description:
+        "Check destination capacity and the original map separately from source read errors. A stale or incomplete map cannot establish completion, even when the image has full length.",
+      flags: [
+        ["df -Pk", "Portable filesystem capacity report in 1024-byte units."],
+        ["--show-status", "Display recorded map status counts."],
+      ],
+      note: "Do not discard the image or replace its map with an unrelated one. Standalone ddrescue may request input after a map write failure; DRC supplies q+Enter only for the fixed map-save abort prompt and records that input; readable artifacts remain available. A backup map is not adopted automatically.",
+      source: gnu,
+    },
+    {
+      id: "parameters",
+      category: "setup",
+      title: "Set your own paths",
+      tool: "Shell variables",
+      effect: "system-change",
+      command: `SOURCE_ID='REPLACE_WITH_DEVICE_ID'\nSOURCE='/dev/REPLACE_WITH_DEVICE'\nIMAGE='/absolute/destination/image.raw'\nMAP='/absolute/destination/rescue.map'\nOFFSET='REPLACE_WITH_START_SECTOR'\nINODE='REPLACE_WITH_INODE'`,
+      description: mac
+        ? "SOURCE_ID is a whole-disk identifier such as diskN; SOURCE uses the corresponding raw rdiskN node for acquisition. IMAGE and MAP belong on another disk."
+        : "Use the exact whole-device path reported by lsblk. IMAGE and MAP belong on another disk. OFFSET is a sector count, not bytes.",
+      flags: [
+        [
+          "SOURCE",
+          "Source medium to read; verify its identity every reconnect.",
+        ],
+        ["IMAGE / MAP", "Matching destination image and persistent mapfile."],
+        [
+          "OFFSET / INODE",
+          "Values obtained from partition and directory reports.",
+        ],
+      ],
+      note: "Examples contain placeholders. Replace and verify every path before using your own terminal. The reference never runs commands.",
+      source:
+        "https://www.gnu.org/software/bash/manual/bash.html#Shell-Parameters",
+    },
+    mac
+      ? {
+          id: "list",
+          category: "identify",
+          title: "List physical media",
+          tool: "diskutil",
+          effect: "metadata",
+          command: "diskutil list -plist physical",
+          description:
+            "Structured physical-device enumeration, separate from synthesized volumes.",
+          flags: [
+            ["list", "List devices and their partition entries."],
+            ["-plist", "Return a property list."],
+            ["physical", "Restrict enumeration to physical disks."],
+          ],
+          source: "man diskutil · installed macOS manual",
+        }
+      : {
+          id: "list",
+          category: "identify",
+          title: "List block devices with exact sizes",
+          tool: "lsblk",
+          effect: "metadata",
+          command:
+            "lsblk --json --bytes --output NAME,KNAME,TYPE,SIZE,LOG-SEC,PHY-SEC,RO,RM,TRAN,MODEL,SERIAL,FSTYPE,LABEL,UUID,MOUNTPOINTS",
+          description:
+            "Explicit columns avoid changing default output. Child entries retain device relationships.",
+          flags: [
+            ["--json", "Structured JSON output."],
+            ["--bytes", "Sizes in bytes."],
+            ["--output", "Request named columns explicitly."],
+            [
+              "RO / RM",
+              "Kernel read-only and removable attributes, not DRC policy.",
+            ],
+          ],
+          note: "lsblk uses sysfs and udev; without udev information it can fall back to filesystem probing.",
+          source: man("util-linux/lsblk.8.en.html"),
+        },
+    mac
+      ? {
+          id: "info",
+          category: "identify",
+          title: "Read a device descriptor",
+          tool: "diskutil",
+          effect: "metadata",
+          command: 'diskutil info -plist "${SOURCE_ID}"',
+          description:
+            "Read the selected device's reported geometry, protocol and properties.",
+          flags: [
+            ["info", "Query one device."],
+            ["-plist", "Preserve named structured fields."],
+          ],
+          source: "man diskutil · installed macOS manual",
+        }
+      : {
+          id: "info",
+          category: "identify",
+          title: "Read udev device properties",
+          tool: "udevadm",
+          effect: "metadata",
+          command: 'udevadm info --query=property --name="${SOURCE}"',
+          description:
+            "Retain the complete udev property report, including bridge and vendor identifiers when available.",
+          flags: [
+            ["info", "Query the device database."],
+            ["--query=property", "List stored key/value properties."],
+            ["--name", "Select the device node."],
+          ],
+          source: man("udev/udevadm.8.en.html"),
+        },
+    {
+      id: "watch",
+      category: "identify",
+      title: "Observe connection events",
+      tool: mac ? "diskutil" : "udevadm",
+      effect: "metadata",
+      command: mac
+        ? "diskutil activity"
+        : "udevadm monitor --udev --subsystem-match=block",
+      description:
+        "Receive device events; this is not a surface scan. Stop with Ctrl+C.",
+      flags: mac
+        ? [["activity", "Subscribe to Disk Arbitration activity."]]
+        : [
+            ["--udev", "Observe processed udev events."],
+            ["--subsystem-match=block", "Filter to block devices."],
+          ],
+      source: mac
+        ? "man diskutil · installed macOS manual"
+        : man("udev/udevadm.8.en.html"),
+    },
+    {
+      id: "smart",
+      category: "inspect",
+      title: "Read SMART / NVMe attributes",
+      tool: "smartctl",
+      effect: "source-read",
+      command: 'smartctl -a -j "${SOURCE}"',
+      description:
+        "Report device attributes. Bridge support and OS permissions determine what is available; an unavailable report is not a diagnosis.",
+      flags: [
+        ["-a", "All standard SMART/device information."],
+        ["-j", "JSON output."],
+        [
+          "-d TYPE",
+          "Explicit bridge/device type when known; check smartctl -h.",
+        ],
+      ],
+      note: "Exit status is a bitmask, not a simple health score. A self-test (-t) causes device activity and is separate from reading an existing report.",
+      source: man("smartmontools/smartctl.8.en.html"),
+    },
+    ...(mac
+      ? [
+          {
+            id: "usb-host-ports",
+            category: "inspect",
+            title: "USB host ports and counters",
+            tool: "ioreg",
+            effect: "metadata",
+            command: "ioreg -a -r -c AppleUSBHostPort -l",
+            description:
+              "Read the original host-port nodes, power allocations, port statistics and link-error counters. High-speed and SuperSpeed logical ports are separate reported nodes; no electrical measurement or diagnosis is inferred.",
+            flags: [
+              ["-a", "Archive output as a property list."],
+              ["-r", "Show subtrees rooted at the matching class."],
+              ["-c AppleUSBHostPort", "Read matching USB host-port objects."],
+              ["-l", "Include their reported properties."],
+            ],
+            source: "ioreg -h · installed macOS command help",
+          } as ReferenceCommand,
+        ]
+      : []),
+    ...(mac
+      ? [
+          {
+            id: "usb-registry",
+            category: "inspect",
+            title: "USB registry hierarchy",
+            tool: "ioreg",
+            effect: "metadata",
+            command: "ioreg -a -p IOUSB -l",
+            description:
+              "Original USB-plane parent/child hierarchy and device properties. Power-state fields and declared current budgets do not measure power reaching an SSD inside an enclosure.",
+            flags: [
+              ["-a", "Archive the output as a property list."],
+              ["-p IOUSB", "Traverse the USB registry plane."],
+              ["-l", "Include reported object properties."],
+            ],
+            note: "No reset, sector read or controller change. Retain the original output when no storage media is reported.",
+            source: "ioreg -h · installed macOS command help",
+          } as ReferenceCommand,
+        ]
+      : []),
+    {
+      id: "connection",
+      category: "inspect",
+      title: mac
+        ? "USB / Thunderbolt host report"
+        : "USB topology and negotiated speed",
+      tool: mac ? "system_profiler" : "lsusb",
+      effect: "metadata",
+      command: mac
+        ? "system_profiler -json SPUSBDataType SPThunderboltDataType SPNVMeDataType"
+        : "lsusb -t",
+      description: mac
+        ? "Host-reported connection and declared power properties. Declared current is not live electrical consumption."
+        : "USB topology with reported speed. It is not measured read throughput or current draw.",
+      flags: mac
+        ? [
+            ["-json", "JSON report."],
+            ["SPUSBDataType", "USB host information."],
+            ["SPThunderboltDataType", "Thunderbolt host information."],
+            ["SPNVMeDataType", "NVMe host storage properties."],
+          ]
+        : [["-t", "Physical USB device hierarchy."]],
+      source: mac
+        ? "man system_profiler · installed macOS manual"
+        : man("usbutils/lsusb.8.en.html"),
+    },
+    ...(!mac
+      ? [
+          {
+            id: "pci",
+            category: "inspect" as const,
+            title: "Inspect PCIe and controller presence",
+            tool: "pciutils / sysfs",
+            effect: "metadata" as const,
+            command:
+              "lspci -nnk\ncat /sys/class/nvme/REPLACE_WITH_CONTROLLER/state",
+            description:
+              "Bus and controller observations may exist even when no namespace appears in lsblk.",
+            flags: [
+              ["-nn", "Keep numeric PCI vendor/device IDs."],
+              ["-k", "Show the reported kernel driver."],
+            ] as [string, string][],
+            note: "A live controller is not proof of readable sectors; no association or fault cause is inferred.",
+            source:
+              "https://manpages.debian.org/bookworm/pciutils/lspci.8.en.html",
+          },
+          {
+            id: "kernel",
+            category: "inspect" as const,
+            title: "Preserve kernel messages",
+            tool: "dmesg",
+            effect: "metadata" as const,
+            command: "dmesg --json",
+            description:
+              "Retain original kernel observations, including I/O errors, timeouts and connection events.",
+            flags: [
+              [
+                "--json",
+                "Structured output; access depends on kernel-log permissions.",
+              ],
+            ] as [string, string][],
+            note: "Missing logs do not establish that no power transition or hardware fault occurred.",
+            source:
+              "https://manpages.debian.org/bookworm/util-linux/dmesg.1.en.html",
+          },
+        ]
+      : []),
+    {
+      id: "copy",
+      category: "acquire",
+      title: "Copying phase · GNU 1.30",
+      tool: "GNU ddrescue",
+      effect: "destination-write",
+      command: `${dd} --no-trim --no-sweep --no-scrape --retry-passes=0 --timeout=30s --log-rates=rates.log -- "\${SOURCE}" "\${IMAGE}" "\${MAP}"`,
+      description:
+        "Read the source into an image with a persistent mapfile. Reuse the matching image and mapfile when resuming.",
+      flags: [
+        ["--no-trim", "Skip trimming."],
+        ["--no-sweep", "Skip sweeping (1.30)."],
+        ["--no-scrape", "Skip scraping; -n alone still allows other phases."],
+        ["--retry-passes=0", "No retry passes."],
+        [
+          "--timeout=30s",
+          "Elapsed time since a successful read; blocked I/O may delay exit.",
+        ],
+        ["--log-rates", "Store rates; buffered output may arrive later."],
+        ["--", "End option parsing before paths."],
+      ],
+      note: "Writes IMAGE and MAP. Keep the source unmounted. Do not add --force for ordinary image output. DRC uses an inherited read-only descriptor rather than reopening SOURCE.",
+      source: gnu,
+    },
+    {
+      id: "retry",
+      category: "acquire",
+      title: "Resume with one retry pass",
+      tool: "GNU ddrescue",
+      effect: "destination-write",
+      command: `${dd} --retry-passes=1 --timeout=30s -- "\${SOURCE}" "\${IMAGE}" "\${MAP}"`,
+      description:
+        "Enable rescue phases and one retry pass using the same acquisition pair.",
+      flags: [
+        ["--retry-passes=1 / -r1", "One retry pass."],
+        ["--reverse / -R", "Reverse all reading passes."],
+        ["--input-position / -i", "Start byte offset."],
+        ["--output-position / -o", "Output byte offset."],
+        ["--size / -s", "Maximum requested byte range."],
+        ["--sector-size / -b", "Logical sector size in bytes."],
+        ["--max-read-rate", "Limit requested read rate."],
+      ],
+      note: "Extra reads can stress unstable media. The reference does not choose retries or direction for you. Preserve offsets and the matching mapfile.",
+      source: gnu,
+    },
+    {
+      id: "map",
+      category: "map",
+      title: "Inspect rescue coverage",
+      tool: "ddrescuelog",
+      effect: "metadata",
+      command:
+        'ddrescuelog --show-status "${MAP}"\nddrescuelog --done-status "${MAP}"',
+      description: "Review map status; file length alone is insufficient.",
+      flags: [
+        ["--show-status / -t", "Show mapfile status counts."],
+        ["--done-status / -D", "Exit zero if the checked domain is finished."],
+        ["+ / ?", "Finished / not tried."],
+        ["*", "Not trimmed."],
+        ["/", "Not scraped."],
+        ["-", "Bad sector."],
+      ],
+      note: "Check the intended domain and image length too. Completion does not verify file contents or true device capacity.",
+      source: gnu,
+    },
+    {
+      id: "partitions",
+      category: "files",
+      title: "Find partition start sectors",
+      tool: "mmls",
+      effect: "source-read",
+      command: 'mmls -b 512 "${IMAGE}"',
+      description:
+        "List partition extents in image sectors. Use the correct sector size.",
+      flags: [
+        ["-b", "Underlying logical sector size in bytes."],
+        ["-o", "Volume-system start sector, if nested."],
+      ],
+      source: tsk("mmls"),
+    },
+    {
+      id: "fs",
+      category: "files",
+      title: "Read filesystem metadata",
+      tool: "fsstat",
+      effect: "source-read",
+      command: 'fsstat -b 512 -o "${OFFSET}" "${IMAGE}"',
+      description:
+        "Inspect the filesystem at a reviewed partition offset. Auto-detection covers supported filesystems, including Windows disk formats.",
+      flags: [
+        ["-o", "Filesystem start sector."],
+        ["-b", "Image logical sector size."],
+        ["-f", "Explicit filesystem type; -f list lists supported types."],
+      ],
+      source: tsk("fsstat"),
+    },
+    {
+      id: "files",
+      category: "files",
+      title: "List files and deleted entries",
+      tool: "fls",
+      effect: "source-read",
+      command: 'fls -l -b 512 -o "${OFFSET}" "${IMAGE}"',
+      description:
+        "List filesystem entries. A deleted entry does not establish recoverability.",
+      flags: [
+        ["-l", "Long listing with metadata."],
+        ["-d / -u", "Deleted only / allocated only."],
+        ["-r", "Recursive listing; can produce substantial I/O."],
+        ["-o", "Filesystem start sector."],
+        ["INODE", "Optional directory address for a single folder."],
+      ],
+      source: tsk("fls"),
+    },
+    {
+      id: "inode",
+      category: "files",
+      title: "Inspect a file's metadata",
+      tool: "istat",
+      effect: "source-read",
+      command: 'istat -b 512 -o "${OFFSET}" "${IMAGE}" "${INODE}"',
+      description:
+        "Read the addressed file's metadata before extracting its content.",
+      flags: [
+        ["-o", "Filesystem start sector."],
+        [
+          "INODE",
+          "Metadata address from a listing; NTFS may use address-type-id syntax.",
+        ],
+      ],
+      source: tsk("istat"),
+    },
+    {
+      id: "extract",
+      category: "files",
+      title: "Extract one file without overwriting",
+      tool: "icat",
+      effect: "destination-write",
+      command:
+        '(set -C; icat -b 512 -o "${OFFSET}" "${IMAGE}" "${INODE}" > recovered.bin)',
+      description:
+        "Write original file bytes to a new output file. Shell noclobber refuses an existing destination.",
+      flags: [
+        ["-o / -b", "Filesystem offset / sector size."],
+        ["-r", "Enable deleted-file recovery mode when appropriate."],
+        ["set -C", "Shell noclobber for the redirection."],
+        [">", "Redirect raw bytes to the destination."],
+      ],
+      note: "Review stderr and exit status. Partial output can remain after failure. Do not treat an output file's existence as successful recovery.",
+      source: tsk("icat"),
+    },
+    mac
+      ? {
+          id: "format",
+          category: "maintenance",
+          title: "Erase and create an exFAT disk",
+          tool: "diskutil",
+          effect: "source-write",
+          command: 'diskutil eraseDisk ExFAT RECOVERED GPT "${SOURCE_ID}"',
+          description:
+            "Destroys the selected source's partition layout and creates a new filesystem. This is not a recovery step.",
+          flags: [
+            ["eraseDisk", "Erase the entire selected disk."],
+            ["ExFAT", "New filesystem."],
+            ["GPT", "New partition scheme."],
+          ],
+          note: "Never use on a source whose data you still need. Write operations are reference-only; DRC's backend does not execute them.",
+          source: "man diskutil · installed macOS manual",
+        }
+      : {
+          id: "format",
+          category: "maintenance",
+          title: "Create exFAT on a chosen partition",
+          tool: "mkfs.exfat",
+          effect: "source-write",
+          command:
+            "sudo mkfs.exfat -L RECOVERED /dev/REPLACE_WITH_DESTINATION_PARTITION",
+          description:
+            "Overwrites filesystem structures on the chosen partition. Install exfatprogs separately when needed.",
+          flags: [
+            ["-L", "Set the new volume label."],
+            ["PARTITION", "Exact destination partition, not the source disk."],
+          ],
+          note: "Destructive and reference-only. Preserve recovery images first. DRC's backend does not execute this command.",
+          source: man("exfatprogs/mkfs.exfat.8.en.html"),
+        },
   ];
 }
 export function searchReference(command: ReferenceCommand, query: string) {
-  return [command.title, command.tool, command.command, command.description, command.note ?? "", ...command.flags.flat()].join(" ").toLowerCase().includes(query.trim().toLowerCase());
+  return [
+    command.title,
+    command.tool,
+    command.command,
+    command.description,
+    command.note ?? "",
+    ...command.flags.flat(),
+  ]
+    .join(" ")
+    .toLowerCase()
+    .includes(query.trim().toLowerCase());
 }

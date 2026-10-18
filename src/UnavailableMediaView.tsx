@@ -71,9 +71,7 @@ export function UnavailableMediaView({
     <section className="unavailable-view">
       <div className="unavailable-heading">
         <div>
-          <span className="eyebrow">
-            HOST OBSERVATION / NO ACQUISITION SOURCE
-          </span>
+          <span className="eyebrow">Host observation · source unavailable</span>
           <h1>{item.name}</h1>
           <p>{observationLabel(item.stage)}</p>
         </div>
@@ -168,22 +166,15 @@ export function UnavailableMediaView({
       <div className="unavailable-actions">
         {recover && (
           <button
-            className="recovery-start-button"
+            className="button primary"
             onClick={recover}
             disabled={disabled}
           >
-            <Icon name="shield" size={23} />
-            <span>
-              Start recovery<small>Check access & try enabled routes</small>
-            </span>
-            <Icon name="arrow" />
+            <Icon name="shield" />
+            Recovery checks
           </button>
         )}
-        <button
-          className="button primary"
-          onClick={refresh}
-          disabled={disabled}
-        >
+        <button className="button" onClick={refresh} disabled={disabled}>
           <Icon name="refresh" />
           Refresh detection
         </button>

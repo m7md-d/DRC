@@ -8,7 +8,12 @@ export interface PortNode {
   fields: Json;
   children: PortNode[];
   diskIds: string[];
-  observations?: {source: string; rawName: string; relation: string; fields: Json}[];
+  observations?: {
+    source: string;
+    rawName: string;
+    relation: string;
+    fields: Json;
+  }[];
 }
 const text = (v: Json | undefined) =>
   typeof v === "string" ? v.trim() : undefined;
@@ -267,8 +272,15 @@ export function portTopology(fields: Json | null): PortNode[] {
   return groups;
 }
 export function portMeasurements(node: PortNode) {
-  const f = node.fields;
-  const speeds: Record<string, string> = {
+  const sources = [
+    node.fields,
+    ...(node.observations ?? []).map((o) => o.fields),
+  ];
+  const reported = (fields: Json, key: string) =>
+    key === "IOPowerManagement.CurrentPowerState"
+      ? getField(getField(fields, "IOPowerManagement"), "CurrentPowerState")
+      : getField(fields, key);
+  const speedNames: Record<string, string> = {
     low_speed: "Up to 1.5 Mb/s",
     full_speed: "Up to 12 Mb/s",
     high_speed: "Up to 480 Mb/s",
@@ -277,40 +289,133 @@ export function portMeasurements(node: PortNode) {
     super_speed_plus_by_2: "Up to 20 Gb/s",
     super_speed_limited: "Limited to 5 Gb/s",
   };
-  const reported = (key: string) =>
-    key === "IOPowerManagement.CurrentPowerState"
-      ? getField(getField(f, "IOPowerManagement"), "CurrentPowerState")
-      : getField(f, key);
   const measurement = (label: string, keys: string[], hint: string) => {
-    const key = keys.find((k) => reported(k) !== undefined);
+    const key = keys.find((key) =>
+      sources.some((fields) => reported(fields, key) !== undefined),
+    );
+    const values = key
+      ? [
+          ...new Map(
+            sources
+              .map((fields) => reported(fields, key))
+              .filter((value): value is Json => value !== undefined)
+              .map((value) => [JSON.stringify(value), value]),
+          ).values(),
+        ]
+      : [];
+    const format = (value: Json) => {
+      const original = displayValue(value);
+      if (key === "Device Speed")
+        return (
+          [
+            "Low speed · 1.5 Mb/s",
+            "Full speed · 12 Mb/s",
+            "High speed · 480 Mb/s",
+            "SuperSpeed · 5 Gb/s",
+            "SuperSpeed+ · 10 Gb/s",
+            "SuperSpeed+ · 20 Gb/s",
+          ][Number(original)] ?? original
+        );
+      if (key === "device_speed") return speedNames[original] ?? original;
+      if (key === "Active" && typeof value === "boolean")
+        return value ? "Active" : "Inactive";
+      if (key === "spdisplays_online")
+        return original === "spdisplays_yes" ? "Online" : original;
+      if (key === "speed" && /^\d+(\.\d+)?$/.test(original))
+        return `${original} Mb/s`;
+      if (
+        key &&
+        [
+          "bus_power",
+          "bus_power_used",
+          "bus_power_available",
+          "kUSBWakePortCurrentLimit",
+          "kUSBSleepPortCurrentLimit",
+          "kUSBBusCurrentAllocation",
+        ].includes(key) &&
+        /^\d+$/.test(original)
+      )
+        return `${original} mA`;
+      return original;
+    };
     return {
       label,
       key,
-      value: key
-        ? ["bus_power", "bus_power_used", "bus_power_available", "kUSBWakePortCurrentLimit", "kUSBSleepPortCurrentLimit"].includes(key) &&
-          /^\d+$/.test(displayValue(reported(key)))
-          ? `${displayValue(reported(key))} mA`
-          : key === "device_speed"
-            ? (speeds[displayValue(reported(key))] ??
-              displayValue(reported(key)))
-            : key === "speed" &&
-                /^\d+(\.\d+)?$/.test(displayValue(reported(key)))
-              ? `${displayValue(reported(key))} Mb/s`
-              : displayValue(reported(key))
+      value: values.length
+        ? [...new Set(values.map(format))].join(" / ")
         : "Not reported",
       hint,
     };
   };
+  if (node.kind.toLowerCase().includes("network"))
+    return [
+      measurement(
+        "Link status",
+        ["linkStatus", "operstate"],
+        "Passive interface status from ifconfig or sysfs. An UP flag alone does not establish a connected cable.",
+      ),
+      measurement(
+        "Media / speed",
+        ["media", "speed"],
+        "Reported interface media or negotiated link speed. This is not measured traffic throughput.",
+      ),
+      measurement(
+        "Carrier",
+        ["carrier"],
+        "Original sysfs carrier value, when provided by the driver.",
+      ),
+    ].filter((m) => m.label !== "Carrier" || m.key !== undefined);
+  if (node.kind.toLowerCase().includes("display"))
+    return [
+      measurement(
+        "Reported activity",
+        ["Active", "spdisplays_online", "status"],
+        "Host-reported display transport or connector state.",
+      ),
+      measurement(
+        "Link / resolution",
+        [
+          "LinkRateDescription",
+          "_spdisplays_resolution",
+          "spdisplays_resolution",
+          "spdisplays_pixelresolution",
+        ],
+        "Reported transport link or display resolution. No signal-quality test is performed.",
+      ),
+      measurement(
+        "Hot-plug state",
+        ["HPD_StateDescription"],
+        "Original host hot-plug state. Unknown is preserved as unknown.",
+      ),
+      measurement(
+        "Lane count",
+        ["LaneCount"],
+        "Current host-reported display transport lane count. It does not identify an adapter's downstream connector.",
+      ),
+    ].filter((m) => m.key !== undefined);
   return [
     measurement(
       "Link / speed",
-      ["device_speed", "speed", "current_speed_key", "current_link_speed"],
-      "Reported link or descriptor value. This is not measured read/write throughput.",
+      [
+        "DataRateDescription",
+        "device_speed",
+        "speed",
+        "Device Speed",
+        "USBSpeed",
+        "current_speed_key",
+        "current_link_speed",
+      ],
+      "Reported link or descriptor value. Multiple values retain distinct source readings; this is not disk throughput.",
     ),
     measurement(
       "Power requested",
-      ["bus_power_used", "bMaxPower", "USB Power Requested"],
-      "Declared or host-allocated USB power metadata. It does not measure current flowing into the drive.",
+      [
+        "bus_power_used",
+        "kUSBBusCurrentAllocation",
+        "bMaxPower",
+        "USB Power Requested",
+      ],
+      "Declared or host-allocated USB budget; not measured electrical consumption. bMaxPower is retained in its source units.",
     ),
     measurement(
       "Power available",
@@ -320,18 +425,20 @@ export function portMeasurements(node: PortNode) {
         "kUSBWakePortCurrentLimit",
         "kUSBSleepPortCurrentLimit",
       ],
-      "Host-reported current limit or budget. It is not proof of voltage or current reaching the SSD.",
+      "Host current limit or budget. It does not establish electrical delivery inside the enclosure.",
     ),
     measurement(
       "Port / power state",
       [
+        "Active",
+        "port-status",
         "IOPowerManagement.CurrentPowerState",
         "receptacle_status_key",
         "power/runtime_status",
         "IOServiceState",
         "authorized",
       ],
-      "Original port, runtime or authorization state. These values do not establish the state of the disk inside an enclosure.",
+      "Original port, runtime or authorization state; hardware cause is not inferred.",
     ),
   ];
 }

@@ -1,13 +1,16 @@
 import { Plot } from "./Plot";
 import { commandLine, timestamp } from "./data";
 import type { CommandRecord } from "./types";
+import { ModeDetails } from "./ModeDetails";
 
 export function CommandTiming({
   records,
   onSelect,
+  simple = false,
 }: {
   records: CommandRecord[];
   onSelect: (id: string) => void;
+  simple?: boolean;
 }) {
   return (
     <>
@@ -25,6 +28,54 @@ export function CommandTiming({
         These are command durations; they do not measure sector latency or
         device throughput. Running commands show elapsed time so far.
       </p>
+      {simple && (
+        <>
+          <dl className="reading-summary">
+            <div>
+              <dt>Commands</dt>
+              <dd>{records.length}</dd>
+            </div>
+            <div>
+              <dt>Exit 0</dt>
+              <dd>{records.filter((r) => r.exitCode === 0).length}</dd>
+            </div>
+            <div>
+              <dt>Nonzero exit</dt>
+              <dd>
+                {
+                  records.filter((r) => r.exitCode !== null && r.exitCode !== 0)
+                    .length
+                }
+              </dd>
+            </div>
+            <div>
+              <dt>Last recorded start</dt>
+              <dd>
+                {records.length
+                  ? timestamp(records.at(-1)!.startedAt)
+                  : "No commands"}
+              </dd>
+            </div>
+          </dl>
+          <div className="recent-command-list" aria-label="Recent commands">
+            {records
+              .slice(-5)
+              .reverse()
+              .map((record) => (
+                <button
+                  key={record.id}
+                  onClick={() => onSelect(record.id)}
+                  data-hint={commandLine(record)}
+                >
+                  <strong>{record.program.split("/").at(-1)}</strong>
+                  <span>{timestamp(record.startedAt)}</span>
+                  <span>{record.durationMs} ms</span>
+                  <span>Exit {record.exitCode ?? "not recorded"}</span>
+                </button>
+              ))}
+          </div>
+        </>
+      )}
       <Plot
         title="Command elapsed time"
         description="DRC process timer · milliseconds"
@@ -40,8 +91,10 @@ export function CommandTiming({
         }))}
         onSelect={(i) => onSelect(records[i].id)}
       />
-      <details className="measurement-source">
-        <summary>Every command duration · {records.length} records</summary>
+      <ModeDetails
+        simple={simple}
+        title={`Command durations · ${records.length} records`}
+      >
         <div className="table-scroll">
           <table className="timing-table">
             <thead>
@@ -70,7 +123,7 @@ export function CommandTiming({
             </tbody>
           </table>
         </div>
-      </details>
+      </ModeDetails>
     </>
   );
 }

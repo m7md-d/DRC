@@ -508,8 +508,9 @@ private struct PortBranch: View {
     } label: {
       HStack(alignment: .top, spacing: 8) {
         Image(
-          systemName: node.children.isEmpty
-            ? "cable.connector" : "point.3.connected.trianglepath.dotted"
+          systemName: node.kind.lowercased().contains("display") ? "display"
+            : node.kind.lowercased().contains("network") ? "network"
+            : node.children.isEmpty ? "cable.connector" : "point.3.connected.trianglepath.dotted"
         ).foregroundStyle(.secondary)
         VStack(alignment: .leading, spacing: 2) {
           Text(node.label)
@@ -586,7 +587,7 @@ private struct NativeRoot: View {
         }.buttonStyle(.plain).help("Close Quick Look")
       }
       HStack {
-        Text(model.host?.chip ?? model.host?.model ?? "Your Mac")
+        Text(model.host?.chip ?? model.host?.model ?? "Mac")
         Spacer()
         Text(model.host?.osVersion.map { "macOS " + $0 } ?? "macOS").foregroundStyle(.secondary)
       }.font(.caption)
@@ -699,13 +700,19 @@ private struct NativeRoot: View {
     let height = button.window?.screen?.visibleFrame.height ?? 800
     model.panelHeight = min(400, max(300, height - 70))
     popover.contentSize = NSSize(width: 360, height: model.panelHeight)
-    NSApp.activate(ignoringOtherApps: true)
+    // Activating the application here brings its primary window's Space forward.
+    // A status popover must stay in the Space where the status item was clicked.
+    if let window = popover.contentViewController?.view.window { configureMonitorPresentation(window) }
     popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
     popover.contentViewController?.view.window?.title = "DRC Quick Look"
     popover.contentViewController?.view.window?.makeKey()
   }
   func hide() { popover.performClose(nil) }
+  func popoverWillShow(_ notification: Notification) {
+    if let window = popover.contentViewController?.view.window { configureMonitorPresentation(window) }
+  }
   func popoverDidShow(_ notification: Notification) {
+    if let window = popover.contentViewController?.view.window { configureMonitorPresentation(window) }
     send(7, "1")
     model.begin()
   }

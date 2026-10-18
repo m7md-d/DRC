@@ -3,6 +3,7 @@ import { bridge, native } from "./bridge";
 import { FieldTable } from "./FieldTable";
 import { ArtifactPreview } from "./ArtifactPreview";
 import { ByteValue } from "./ByteValue";
+import { ModeDetails } from "./ModeDetails";
 import { commandLine, timestamp } from "./data";
 import type { ExtractionJob, ExtractionPlan, Json } from "./types";
 
@@ -13,6 +14,7 @@ export function ExtractionPanel({
   disabled,
   onJob,
   clearSelection,
+  simple = false,
 }: {
   reportId: string | null;
   indices: number[];
@@ -20,6 +22,7 @@ export function ExtractionPanel({
   disabled: boolean;
   onJob: (job: ExtractionJob) => void;
   clearSelection: () => void;
+  simple?: boolean;
 }) {
   const [destination, setDestination] = useState("");
   const [plan, setPlan] = useState<ExtractionPlan | null>(null);
@@ -54,14 +57,34 @@ export function ExtractionPanel({
   return (
     <div className="extraction-panel">
       <div className="section-heading">
-        <h3>Extract selected file entries</h3>
+        <h3>
+          {simple
+            ? "Save copies of selected files"
+            : "Extract selected file entries"}
+        </h3>
         <span className="small-tag">SOURCE READ ONLY</span>
       </div>
-      <p className="source-label">
+      {simple && (
+        <ol className="workflow-steps" aria-label="Save file copies steps">
+          <li data-current={!plan}>
+            1 <span>Choose destination</span>
+          </li>
+          <li data-current={!!plan}>
+            2 <span>Review files and save</span>
+          </li>
+        </ol>
+      )}
+      <p className="source-label" hidden={simple}>
         {indices.length} selected entries · no folder recursion. Every output is
         a separate original content-reader stdout stream. Deleted entries use
         the reader's recorded metadata address.
       </p>
+      {simple && (
+        <p className="panel-description">
+          {indices.length} files selected. Copies are saved in a new folder.
+          Folders are not copied recursively; select files inside each folder.
+        </p>
+      )}
       {error && (
         <div className="error-box" role="alert">
           {error}
@@ -106,7 +129,7 @@ export function ExtractionPanel({
                 })
               }
             >
-              Review extraction
+              {simple ? "Review files and destination" : "Review extraction"}
             </button>
           </div>
         </>
@@ -123,11 +146,11 @@ export function ExtractionPanel({
             {plan.destination}/DRC-extraction-…
           </code>
           <p className="source-label">
-            Available <ByteValue value={plan.freeBytes}/>. A
-            new private folder is created. Each output is capped at the entry's
-            reported size; an attempt exceeding that limit is retained as
-            partial. Each reader has a one-hour process limit. A stop request
-            escalates after five seconds if the process has not exited.
+            Available <ByteValue value={plan.freeBytes} />. A new private folder
+            is created. Each output is capped at the entry's reported size; an
+            attempt exceeding that limit is retained as partial. Each reader has
+            a one-hour process limit. A stop request escalates after five
+            seconds if the process has not exited.
           </p>
           <div className="table-scroll">
             <table className="image-table">
@@ -153,14 +176,13 @@ export function ExtractionPanel({
               </tbody>
             </table>
           </div>
-          <details className="measurement-source">
-            <summary>Every reviewed field</summary>
+          <ModeDetails simple={simple} title="Reviewed fields">
             <FieldTable
               title="Extraction plan"
               source="Pinned descriptors, explicit geometry and original entries"
               value={plan as unknown as Json}
             />
-          </details>
+          </ModeDetails>
           <label className="form-field">
             Type {plan.confirmation} to confirm this source
             <input
@@ -191,7 +213,7 @@ export function ExtractionPanel({
                 })
               }
             >
-              Start extraction
+              {simple ? "Save file copies" : "Start extraction"}
             </button>
           </div>
         </section>
@@ -235,7 +257,8 @@ export function ExtractionPanel({
               <summary>
                 <span>{item.filename}</span>
                 <span>
-                  {item.state} · <ByteValue value={item.writtenBytes}/> / <ByteValue value={item.maximumBytes}/>
+                  {item.state} · <ByteValue value={item.writtenBytes} /> /{" "}
+                  <ByteValue value={item.maximumBytes} />
                 </span>
               </summary>
               <FieldTable
@@ -285,7 +308,7 @@ export function ExtractionPanel({
                       {item.record.stderr || "No stderr returned."}
                     </pre>
                     <FieldTable
-                      title="Every command-record field"
+                      title="Command-record fields"
                       source="Original stderr bytes are retained as base64"
                       value={item.record as unknown as Json}
                     />
@@ -295,7 +318,7 @@ export function ExtractionPanel({
             </details>
           ))}
           <details className="measurement-source">
-            <summary>Every extraction field</summary>
+            <summary>Extraction fields</summary>
             <FieldTable
               title="Extraction record"
               source="Source identity, query, destination and all entry results"

@@ -316,7 +316,10 @@ impl PlatformBackend for LinuxBackend {
         Ok(QueryResult {
             record,
             fields: Some(
-                serde_json::json!({"USBDevices":devices,"ThunderboltDevices":thunderbolt,"BlockNodes":connection_block_nodes(),"measurementScope":"sysfs declared USB properties and lsusb topology; no live current measurement"}),
+                serde_json::json!({"USBDevices":devices,"ThunderboltDevices":thunderbolt,"BlockNodes":connection_block_nodes(),
+                    "NetworkInterfaces":crate::network::sysfs_entries(Path::new("/sys/class/net"), &["operstate","carrier","speed","duplex","mtu","type","ifindex","phys_port_name"]),
+                    "DisplayConnectors":crate::network::sysfs_entries(Path::new("/sys/class/drm"), &["status","enabled","modes","dpms"]),
+                    "measurementScope":"sysfs USB, network and display metadata with canonical device ancestry; no live electrical measurement"}),
             ),
             parse_error: None,
         })

@@ -7,10 +7,12 @@ mod linux;
 mod menu_bar;
 mod model;
 mod mount_guard;
+mod network;
 mod platform;
 mod policy;
 mod query;
 mod rates;
+mod readme_capture;
 mod recovery;
 mod recovery_host;
 #[cfg(target_os = "macos")]
@@ -1091,7 +1093,20 @@ pub fn run() {
         .manage(Runtime::default())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            let root = app.path().app_data_dir()?;
+            // Screenshot automation uses an isolated store, never the owner's sessions.
+            // This changes persistence only; device admission and operation policies stay intact.
+            let root = match std::env::var_os("DRC_CAPTURE_STORE") {
+                Some(path) => {
+                    let path = std::path::PathBuf::from(path);
+                    if !path.is_absolute() {
+                        return Err(
+                            std::io::Error::other("DRC_CAPTURE_STORE must be absolute").into()
+                        );
+                    }
+                    path
+                }
+                None => app.path().app_data_dir()?,
+            };
             let store = Arc::new(Store::open(&root).map_err(std::io::Error::other)?);
             acquisition::recover_jobs(&store).map_err(std::io::Error::other)?;
             extraction::recover(&store).map_err(std::io::Error::other)?;
@@ -1102,6 +1117,10 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            menu_bar::window_presentation,
+            readme_capture::readme_capture_context,
+            readme_capture::readme_capture_frame,
+            readme_capture::readme_capture_finish,
             discover_devices,
             recovery_targets,
             run_recovery_checks,

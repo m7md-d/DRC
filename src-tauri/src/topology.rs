@@ -2,6 +2,9 @@
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap, HashSet};
+#[path = "topology_connections.rs"]
+mod connections;
+use connections::mac_connections;
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -62,6 +65,7 @@ fn raw_name(v: &Value) -> String {
         "IORegistryEntryName",
         "product",
         "device_name",
+        "interface",
         "sysfsName",
     ]
     .iter()
@@ -79,7 +83,15 @@ fn evidence(v: &Value, source: &str, relation: &str) -> Observation {
 fn node(id: String, label: String, kind: &str, v: &Value, source: &str) -> Node {
     let disk_ids = ["bsd_name", "BSD Name", "DeviceIdentifier", "kname"]
         .iter()
-        .filter_map(|k| text(v, k))
+        .filter_map(|key| {
+            text(v, key).filter(|id| {
+                if *key == "kname" {
+                    crate::linux::valid_id(id)
+                } else {
+                    crate::query::valid_device_id(id)
+                }
+            })
+        })
         .collect();
     Node {
         id,
@@ -121,19 +133,21 @@ fn descendants<'a>(v: &'a Value, key: &str, out: &mut Vec<&'a Value>, depth: usi
 fn whole(v: &Value) -> bool {
     v["Whole"].as_bool() == Some(true) || text(v, "Whole").as_deref() == Some("true")
 }
-fn hardware(v: &Value, path: &str, depth: usize) -> Vec<Node> {
+fn hardware(v: &Value, path: &str, depth: usize, source: &str) -> Vec<Node> {
     if depth >= 64 {
         return vec![];
     }
     let class = text(v, "IOObjectClass").unwrap_or_default();
-    let children: Vec<Node> = objects(&v["IORegistryEntryChildren"])
+    let mut children: Vec<Node> = objects(&v["IORegistryEntryChildren"])
         .iter()
         .enumerate()
-        .flat_map(|(i, c)| hardware(c, &format!("{path}/{i}"), depth + 1))
+        .flat_map(|(i, c)| hardware(c, &format!("{path}/{i}"), depth + 1, source))
         .collect();
     let is_usb = class == "IOUSBHostDevice" || class == "IOUSBDevice";
     let is_media = class == "IOMedia" && whole(v);
-    if !is_usb && !is_media {
+    let is_network = class.contains("EthernetInterface") || class == "IONetworkInterface";
+    let is_hub_port = class.ends_with("HubPort");
+    if !is_usb && !is_media && !is_network && !is_hub_port {
         return children;
     }
     let id = number(v, "IORegistryEntryID")
@@ -145,7 +159,50 @@ fn hardware(v: &Value, path: &str, depth: usize) -> Vec<Node> {
             .iter()
             .any(|n| !n.disk_ids.is_empty() || n.kind == "Storage media");
     let hub = number(v, "bDeviceClass") == Some(9) || raw.to_lowercase().contains("hub");
-    let (label, kind) = if is_media {
+    if hub {
+        for (i, port) in children
+            .iter_mut()
+            .filter(|n| n.kind == "Hub port")
+            .enumerate()
+        {
+            let version = if text(&port.fields, "IOObjectClass").is_some_and(|c| c.contains("30")) {
+                "USB 3"
+            } else {
+                "USB 2"
+            };
+            port.label = format!("{version} downstream port {}", i + 1);
+            for reading in &mut port.observations {
+                reading.relation = "Reported logical port order in this hub; printed chassis socket number is not established".into();
+            }
+        }
+    }
+    let (label, kind) = if is_network {
+        (
+            format!(
+                "Network interface · {}",
+                text(v, "BSD Name").unwrap_or(raw.clone())
+            ),
+            "Network interface",
+        )
+    } else if is_hub_port {
+        let location = text(v, "IORegistryEntryLocation").unwrap_or_default();
+        let suffix = if location.is_empty() {
+            String::new()
+        } else {
+            format!(" · {location}")
+        };
+        (
+            format!(
+                "{} hub port{suffix}",
+                if class.contains("30") {
+                    "USB 3"
+                } else {
+                    "USB 2"
+                }
+            ),
+            "Hub port",
+        )
+    } else if is_media {
         (
             format!(
                 "Storage media · {}",
@@ -157,6 +214,8 @@ fn hardware(v: &Value, path: &str, depth: usize) -> Vec<Node> {
         (
             if number(v, "bcdUSB").is_some_and(|x| x >= 0x300) {
                 "USB 3 hub"
+            } else if number(v, "bcdUSB").is_some() {
+                "USB 2 hub"
             } else {
                 "USB hub"
             }
@@ -170,7 +229,7 @@ fn hardware(v: &Value, path: &str, depth: usize) -> Vec<Node> {
     } else {
         (raw.clone(), "USB device")
     };
-    let mut n = node(id, label, kind, v, "IORegistry · USB host hierarchy");
+    let mut n = node(id, label, kind, v, source);
     n.children = children;
     vec![n]
 }
@@ -359,7 +418,7 @@ fn mac(fields: &Value) -> Vec<Node> {
                 .map(|n| format!("host-port:{n}"))
                 .unwrap_or_else(|| format!("host-port-path:{i}"))
         });
-        let mut children = hardware(p, &format!("host/{i}"), 0);
+        let mut children = hardware(p, &format!("host/{i}"), 0, "IORegistry · host ports");
         if let Some(port) = physical {
             let n = groups.entry(port).or_insert_with(|| Node {
                 id: id.clone(),
@@ -397,7 +456,12 @@ fn mac(fields: &Value) -> Vec<Node> {
         .iter()
         .enumerate()
     {
-        registry_nodes.extend(hardware(p, &format!("usb/{i}"), 0));
+        registry_nodes.extend(hardware(
+            p,
+            &format!("usb/{i}"),
+            0,
+            "IORegistry · USB devices",
+        ));
     }
     fn merge_registry(n: Node, roots: &mut Vec<Node>, parent: Option<&str>) {
         if let Some(existing) = find_mut(roots, &n.id) {
@@ -426,7 +490,12 @@ fn mac(fields: &Value) -> Vec<Node> {
         .iter()
         .enumerate()
     {
-        for n in hardware(p, &format!("storage-service/{i}"), 0) {
+        for n in hardware(
+            p,
+            &format!("storage-service/{i}"),
+            0,
+            "IORegistry · USB services",
+        ) {
             merge_registry(n, &mut roots, None);
         }
     }
@@ -557,6 +626,7 @@ fn mac(fields: &Value) -> Vec<Node> {
             roots.push(n);
         }
     }
+    mac_connections(&mut roots, fields);
     roots
 }
 fn linux(fields: &Value) -> Vec<Node> {
@@ -659,6 +729,7 @@ fn linux(fields: &Value) -> Vec<Node> {
             }
         }
     }
+    connections::linux_connections(&mut roots, fields);
     roots
 }
 pub fn connection_nodes(fields: Option<&Value>) -> Option<Vec<Node>> {
@@ -670,12 +741,23 @@ pub fn connection_nodes(fields: Option<&Value>) -> Option<Vec<Node>> {
         "IORegistryUSBReport",
         "IORegistryPortReport",
         "IORegistryStorageReport",
+        "IORegistryNetworkReport",
+        "IORegistryTransportReport",
+        "SPDisplaysDataType",
     ]
     .iter()
     .any(|k| f.get(k).is_some())
     {
         Some(mac(f))
-    } else if f.get("USBDevices").is_some() || f.get("ThunderboltDevices").is_some() {
+    } else if [
+        "USBDevices",
+        "ThunderboltDevices",
+        "NetworkInterfaces",
+        "DisplayConnectors",
+    ]
+    .iter()
+    .any(|key| f.get(key).is_some())
+    {
         Some(linux(f))
     } else {
         None
@@ -686,6 +768,79 @@ pub fn connection_nodes(fields: Option<&Value>) -> Option<Vec<Node>> {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn network_fallback_requires_a_present_interface_and_keeps_unknown_parentage() {
+        let f = json!({"IORegistryNetworkReport":{"fields":[]}, "SPNetworkDataType":[{"_name":"Fixture Ethernet","hardware":"Ethernet","interface":"en9"},{"_name":"Absent service","interface":"en10"}],
+            "NetworkInterfaceReport":{"fields":[{"interface":"en9","linkStatus":"inactive"}]}});
+        let roots = connection_nodes(Some(&f)).unwrap();
+        let mut all = vec![];
+        each(&roots, &mut all);
+        let n = all
+            .iter()
+            .find(|n| n.id == "network-interface:en9")
+            .unwrap();
+        assert!(n.disk_ids.is_empty());
+        assert!(n.label.contains("Ethernet"));
+        assert!(n
+            .observations
+            .iter()
+            .any(|o| o.relation.contains("ancestry is not reported")));
+        assert!(!all.iter().any(|n| n.label.contains("Absent service")));
+    }
+    #[test]
+    fn usb_hub_ports_network_interfaces_and_inactive_display_routes_keep_exact_ancestry() {
+        let ethernet = json!({"IOObjectClass":"IOEthernetInterface","IORegistryEntryID":"300","IORegistryEntryName":"en9","BSD Name":"en9"});
+        let hub = json!({"IOObjectClass":"IOUSBHostDevice","IORegistryEntryID":"100","USB Product Name":"Fixture hub","bDeviceClass":"9","IORegistryEntryChildren":[
+            {"IOObjectClass":"AppleUSB30HubPort","IORegistryEntryID":"200","IORegistryEntryLocation":"01220000","port-status":"5120","IORegistryEntryChildren":[ethernet.clone()]},
+            {"IOObjectClass":"AppleUSB30HubPort","IORegistryEntryID":"201","IORegistryEntryLocation":"01230000","port-status":"0"}]});
+        let f = json!({"IORegistryPortReport":{"fields":[{"UsbCPortNumber":"2","IORegistryEntryChildren":[hub]}]},
+            "IORegistryNetworkReport":{"fields":[ethernet]}, "SPNetworkDataType":[{"_name":"Fixture Ethernet","hardware":"Ethernet","interface":"en9"}],
+            "NetworkInterfaceReport":{"fields":[{"interface":"en9","linkStatus":"inactive","media":"autoselect (none)"}]},
+            "IORegistryTransportReport":{"fields":[{"IORegistryEntryID":"400","TransportTypeDescription":"DisplayPort","ParentBuiltInPortNumber":"2","ParentBuiltInPortTypeDescription":"USB-C","Active":false,"LinkRateDescription":"No Link","HPD_StateDescription":"Unknown"}]}});
+        let roots = connection_nodes(Some(&f)).unwrap();
+        let mut all = vec![];
+        each(&roots, &mut all);
+        let net: Vec<_> = all.iter().filter(|n| n.id == "registry:300").collect();
+        assert_eq!(net.len(), 1);
+        assert!(net[0].disk_ids.is_empty());
+        assert!(net[0]
+            .observations
+            .iter()
+            .any(|o| o.fields["linkStatus"] == "inactive"));
+        assert!(all
+            .iter()
+            .any(|n| n.id == "registry:200" && n.children[0].id == "registry:300"));
+        assert!(all
+            .iter()
+            .any(|n| n.id == "registry:201" && n.children.is_empty()));
+        let output = roots
+            .iter()
+            .find(|n| n.id == "usb-c:2")
+            .unwrap()
+            .children
+            .iter()
+            .find(|n| n.kind == "Display output")
+            .unwrap();
+        assert_eq!(output.fields["Active"], false);
+        assert_eq!(output.fields["HPD_StateDescription"], "Unknown");
+        assert!(!output.label.contains("HDMI"));
+    }
+    #[test]
+    fn linux_network_and_display_status_use_canonical_ancestry_without_prefix_guessing() {
+        let f = json!({"USBDevices":[{"sysfsName":"1-1","sysfsPath":"/sys/usb1/1-1"}],
+            "NetworkInterfaces":[{"sysfsName":"eth9","deviceSysfsPath":"/sys/usb1/1-1/1-1:1.0","operstate":"down","carrier":"0"}, {"sysfsName":"eth10","deviceSysfsPath":"/sys/usb1/1-10/1-10:1.0","operstate":"unknown"}],
+            "DisplayConnectors":[{"sysfsName":"card0-HDMI-A-1","deviceSysfsPath":"/sys/pci/gpu","status":"disconnected"}]});
+        let roots = connection_nodes(Some(&f)).unwrap();
+        assert_eq!(roots[0].children[0].label, "eth9");
+        assert_eq!(roots[0].children[0].fields["operstate"], "down");
+        let mut all = vec![];
+        each(&roots[0].children, &mut all);
+        assert!(!all.iter().any(|n| n.label == "eth10"));
+        assert!(roots
+            .iter()
+            .any(|n| n.label == "Display outputs"
+                && n.children[0].fields["status"] == "disconnected"));
+    }
     #[test]
     fn usb_service_plane_adds_unassigned_media_without_duplicating_its_bridge() {
         let bridge = json!({"IOObjectClass":"IOUSBHostDevice","IORegistryEntryID":"100","USB Product Name":"Fixture SSD"});

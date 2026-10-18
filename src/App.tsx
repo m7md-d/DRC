@@ -17,9 +17,10 @@ import type {
   AcquisitionJob,
   Json,
   ExtractionJob,
-  RecoveryRun, RecoveryOptions,
+  RecoveryRun,
+  RecoveryOptions,
 } from "./types";
-import { bridge, native, subscribe } from "./bridge";
+import { bridge, native, subscribe, type WindowPresentation } from "./bridge";
 import {
   commandLine,
   displayValue,
@@ -39,7 +40,7 @@ import { ImagePanel } from "./ImagePanel";
 import { EasyWorkspace } from "./EasyWorkspace";
 import { CheatSheet } from "./CheatSheet";
 import { HostEvidence } from "./HostEvidence";
-import { Modal } from "./Modal";
+import { WorkspacePanel } from "./WorkspacePanel";
 import { ByteValue } from "./ByteValue";
 import { Hints } from "./Hints";
 import { PortTree } from "./PortTree";
@@ -48,22 +49,39 @@ import { UnavailableMediaView, observationLabel } from "./UnavailableMediaView";
 import { listen } from "@tauri-apps/api/event";
 import { version } from "../package.json";
 import { RecoveryPanel } from "./RecoveryPanel";
-
-const tabs: { key: Tab; label: string; icon: IconName }[] = [
-  { key: "device", label: "Device", icon: "drive" },
-  { key: "partitions", label: "Partitions", icon: "partitions" },
-  { key: "smart", label: "SMART / NVMe", icon: "chart" },
-  { key: "connection", label: "Connection", icon: "link" },
-  { key: "activity", label: "Activity", icon: "chart" },
-  { key: "tools", label: "Tools", icon: "tools" },
-];
+import { StorageOverview } from "./StorageOverview";
+import { DeviceTabs } from "./DeviceTabs";
+import { ModeDetails } from "./ModeDetails";
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
-function savedRecovery(run?:RecoveryRun):RecoveryRun|null {
-  if(!run)return null;
-  return run.state==="running"?{...run,state:"interrupted",source:null,steps:run.steps.map(s=>s.state==="running"?{...s,state:"not-run" as const,detail:"This saved check has no completion record."}:s),issue:{code:"INCOMPLETE_SAVED_RUN",title:"No completion was recorded",detail:"The saved run ended while a check was active. Its result is unknown; it is not reported as successful.",scope:"saved-report",evidence:null}}:run;
+function savedRecovery(run?: RecoveryRun): RecoveryRun | null {
+  if (!run) return null;
+  return run.state === "running"
+    ? {
+        ...run,
+        state: "interrupted",
+        source: null,
+        steps: run.steps.map((s) =>
+          s.state === "running"
+            ? {
+                ...s,
+                state: "not-run" as const,
+                detail: "This saved check has no completion record.",
+              }
+            : s,
+        ),
+        issue: {
+          code: "INCOMPLETE_SAVED_RUN",
+          title: "No completion was recorded",
+          detail:
+            "The saved run ended while a check was active. Its result is unknown; it is not reported as successful.",
+          scope: "saved-report",
+          evidence: null,
+        },
+      }
+    : run;
 }
 function Fact({
   label,
@@ -107,14 +125,23 @@ function EmptyState({
   );
 }
 
-function Partitions({ device }: { device: Device }) {
+function Partitions({
+  device,
+  simple = false,
+}: {
+  device: Device;
+  simple?: boolean;
+}) {
   return (
     <>
       <div className="section-heading">
         <div>
           <h3>Partition layout</h3>
           <p className="source-label">
-            {getField(device.info,"kname") ? "lsblk --json --bytes" : "diskutil list -plist physical"} · {device.id}
+            {getField(device.info, "kname")
+              ? "lsblk --json --bytes"
+              : "diskutil list -plist physical"}{" "}
+            · {device.id}
           </p>
         </div>
         <span className="count-tag">{device.partitions.length} entries</span>
@@ -122,32 +149,102 @@ function Partitions({ device }: { device: Device }) {
       {device.partitions.length ? (
         <>
           <PartitionChart device={device} />
-          <div className="table-scroll">
-            <table className="partition-table">
-              <thead>
-                <tr>
-                  <th>DEVICE</th>
-                  <th>CONTENT</th>
-                  <th>VOLUME NAME</th>
-                  <th>SIZE</th>
-                  <th>MOUNT POINT</th>
-                </tr>
-              </thead>
-              <tbody>
-                {device.partitions.map((partition, index) => (
-                  <tr key={index}>
-                    <td>
-                      {displayValue(getField(partition, "DeviceIdentifier") ?? getField(partition, "kname"))}
-                    </td>
-                    <td>{displayValue(getField(partition, "Content") ?? getField(partition, "fstype"))}</td>
-                    <td>{displayValue(getField(partition, "VolumeName") ?? getField(partition, "label"))}</td>
-                    <td><ByteValue value={getField(partition, "Size") ?? getField(partition, "size")}/></td>
-                    <td>{displayValue(getField(partition, "MountPoint") ?? getField(partition, "mountpoints"))}</td>
+          {simple && (
+            <div className="partition-cards">
+              {device.partitions.map((partition, index) => (
+                <article key={index}>
+                  <Icon name="partitions" size={20} />
+                  <div>
+                    <h4>
+                      {displayValue(
+                        getField(partition, "VolumeName") ??
+                          getField(partition, "label") ??
+                          getField(partition, "DeviceIdentifier") ??
+                          getField(partition, "kname"),
+                      )}
+                    </h4>
+                    <p>
+                      {displayValue(
+                        getField(partition, "Content") ??
+                          getField(partition, "fstype"),
+                      )}
+                    </p>
+                    <p>
+                      Mount point:{" "}
+                      {displayValue(
+                        getField(partition, "MountPoint") ??
+                          getField(partition, "mountpoints"),
+                      )}
+                    </p>
+                  </div>
+                  <strong>
+                    <ByteValue
+                      value={
+                        getField(partition, "Size") ??
+                        getField(partition, "size")
+                      }
+                    />
+                  </strong>
+                </article>
+              ))}
+            </div>
+          )}
+          <ModeDetails
+            simple={simple}
+            title="Partition identifiers and mount points"
+          >
+            <div className="table-scroll">
+              <table className="partition-table">
+                <thead>
+                  <tr>
+                    <th>DEVICE</th>
+                    <th>CONTENT</th>
+                    <th>VOLUME NAME</th>
+                    <th>SIZE</th>
+                    <th>MOUNT POINT</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {device.partitions.map((partition, index) => (
+                    <tr key={index}>
+                      <td>
+                        {displayValue(
+                          getField(partition, "DeviceIdentifier") ??
+                            getField(partition, "kname"),
+                        )}
+                      </td>
+                      <td>
+                        {displayValue(
+                          getField(partition, "Content") ??
+                            getField(partition, "fstype"),
+                        )}
+                      </td>
+                      <td>
+                        {displayValue(
+                          getField(partition, "VolumeName") ??
+                            getField(partition, "label"),
+                        )}
+                      </td>
+                      <td>
+                        <ByteValue
+                          value={
+                            getField(partition, "Size") ??
+                            getField(partition, "size")
+                          }
+                        />
+                      </td>
+                      <td>
+                        {displayValue(
+                          getField(partition, "MountPoint") ??
+                            getField(partition, "mountpoints"),
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </ModeDetails>
         </>
       ) : (
         <div className="inline-note">
@@ -156,21 +253,25 @@ function Partitions({ device }: { device: Device }) {
           remains available below.
         </div>
       )}
-      <FieldTable
-        value={device.layout}
-        source="Original partition-layout fields · numeric values retained as exact strings"
-        title="Complete layout fields"
-      />
+      <ModeDetails simple={simple} title="Original partition fields">
+        <FieldTable
+          value={device.layout}
+          source="Original partition-layout fields · numeric values retained as exact strings"
+          title="Complete layout fields"
+        />
+      </ModeDetails>
     </>
   );
 }
 
 function SmartView({
+  simple = false,
   device,
   result,
   busy,
   run,
 }: {
+  simple?: boolean;
   device: Device;
   result?: QueryResult;
   busy: boolean;
@@ -178,6 +279,12 @@ function SmartView({
 }) {
   const [deviceType, setDeviceType] = useState("auto");
   useEffect(() => setDeviceType("auto"), [device.token]);
+  const fields = result?.fields;
+  const status = getField(getField(fields, "smart_status"), "passed");
+  const log = getField(fields, "nvme_smart_health_information_log");
+  const temperature =
+    getField(getField(fields, "temperature"), "current") ??
+    getField(log, "temperature");
   return (
     <>
       <div className="section-heading">
@@ -196,34 +303,118 @@ function SmartView({
           Read information
         </button>
       </div>
-      <details className="smart-transport-options">
-        <summary data-hint="Some USB bridges need an explicit SMART pass-through protocol. Choose a mode using the bridge's documentation, then request a read. DRC does not cycle modes automatically; host and bridge support can still reject the command.">Connection options · SMART transport</summary>
+      {simple && (
+        <dl className="reading-summary" aria-label="Reported SMART readings">
+          <div>
+            <dt>Reported SMART status</dt>
+            <dd>
+              {status === true
+                ? "Passed"
+                : status === false
+                  ? "Failed"
+                  : result
+                    ? "Not reported"
+                    : "Not queried"}
+            </dd>
+          </div>
+          <div>
+            <dt>Temperature</dt>
+            <dd>
+              {temperature !== undefined
+                ? `${displayValue(temperature)} °C`
+                : "Not reported"}
+            </dd>
+          </div>
+          <div>
+            <dt>Percentage used</dt>
+            <dd>
+              {getField(log, "percentage_used") !== undefined
+                ? `${displayValue(getField(log, "percentage_used"))}%`
+                : "Not reported"}
+            </dd>
+          </div>
+          <div>
+            <dt>Last query</dt>
+            <dd>
+              {result ? timestamp(result.record.startedAt) : "Not queried"}
+            </dd>
+          </div>
+        </dl>
+      )}
+      <ModeDetails
+        simple={simple}
+        title={`SMART transport · ${deviceType === "auto" ? "Automatic detection" : deviceType}`}
+        hint="Some USB bridges need an explicit SMART pass-through protocol. Changing this selection performs no query. Choose a documented mode, then request a read."
+      >
         <div className="form-field">
           <span>Pass-through protocol</span>
-          <Select label="SMART pass-through protocol" value={deviceType} onChange={setDeviceType} disabled={busy || device.metadataOnly}
+          <Select
+            label="SMART pass-through protocol"
+            value={deviceType}
+            onChange={setDeviceType}
+            disabled={busy || device.metadataOnly}
             options={[
-              {value:"auto",label:"Automatic detection",detail:"smartctl chooses its device type"},
-              {value:"sat",label:"SAT · ATA over SCSI",detail:"Documented SATA bridge pass-through"},
-              {value:"scsi",label:"SCSI",detail:"SCSI information interface"},
-              {value:"nvme",label:"Native NVMe",detail:"Host-exposed NVMe interface"},
-              {value:"sntasmedia",label:"ASMedia · USB to NVMe",detail:"Requires supported bridge firmware and host"},
-              {value:"sntjmicron",label:"JMicron · USB to NVMe",detail:"Requires supported bridge firmware and host"},
-              {value:"sntrealtek",label:"Realtek · USB to NVMe",detail:"Requires supported bridge firmware and host"},
-            ]}/>
+              {
+                value: "auto",
+                label: "Automatic detection",
+                detail: "smartctl chooses its device type",
+              },
+              {
+                value: "sat",
+                label: "SAT · ATA over SCSI",
+                detail: "Documented SATA bridge pass-through",
+              },
+              {
+                value: "scsi",
+                label: "SCSI",
+                detail: "SCSI information interface",
+              },
+              {
+                value: "nvme",
+                label: "Native NVMe",
+                detail: "Host-exposed NVMe interface",
+              },
+              {
+                value: "sntasmedia",
+                label: "ASMedia · USB to NVMe",
+                detail: "Requires supported bridge firmware and host",
+              },
+              {
+                value: "sntjmicron",
+                label: "JMicron · USB to NVMe",
+                detail: "Requires supported bridge firmware and host",
+              },
+              {
+                value: "sntrealtek",
+                label: "Realtek · USB to NVMe",
+                detail: "Requires supported bridge firmware and host",
+              },
+            ]}
+          />
         </div>
-        <p className="source-label">Changing this selection performs no query. Unsupported pass-through is retained as original output and does not establish disk failure. Some macOS bridges require a vendor driver.</p>
-      </details>
+        <p className="source-label">
+          Changing this selection performs no query. Unsupported pass-through is
+          retained as original output and does not establish disk failure. Some
+          macOS bridges require a vendor driver.
+        </p>
+      </ModeDetails>
       {device.metadataOnly && (
         <div className="inline-note">
           <Icon name="shield" />
           {device.protectionReason}
         </div>
       )}
-      <div className="command-preview">
-        <span className="eyebrow">QUERY</span>
-        <code>smartctl -a -j {deviceType !== "auto" ? `-d ${deviceType} ` : ""}/dev/{device.id}</code>
-        <span className="small-tag">NO SELF-TEST</span>
-      </div>
+      <ModeDetails simple={simple} title="Query command">
+        <div className="command-preview">
+          <span className="eyebrow">QUERY</span>
+          <code>
+            smartctl -a -j {deviceType !== "auto" ? `-d ${deviceType} ` : ""}
+            /dev/
+            {device.id}
+          </code>
+          <span className="small-tag">NO SELF-TEST</span>
+        </div>
+      </ModeDetails>
       {result ? (
         <>
           <div className="report-status">
@@ -257,11 +448,13 @@ function SmartView({
             </div>
           )}
           {result.fields !== null && (
-            <FieldTable
-              value={result.fields}
-              source={`${commandLine(result.record)} · ${timestamp(result.record.startedAt)}`}
-              title="Complete SMART / NVMe fields"
-            />
+            <ModeDetails simple={simple} title="All SMART / NVMe readings">
+              <FieldTable
+                value={result.fields}
+                source={`${commandLine(result.record)} · ${timestamp(result.record.startedAt)}`}
+                title="Complete SMART / NVMe fields"
+              />
+            </ModeDetails>
           )}
         </>
       ) : (
@@ -276,11 +469,13 @@ function SmartView({
 }
 
 function ConnectionView({
+  simple = false,
   result,
   busy,
   run,
   platform = "macOS",
 }: {
+  simple?: boolean;
   platform?: string;
   result: QueryResult | null;
   busy: boolean;
@@ -290,8 +485,12 @@ function ConnectionView({
     <>
       <div className="section-heading">
         <div>
-          <h3>Host connection report</h3>
-          <p className="source-label">USB / Thunderbolt / NVMe · host-reported properties</p>
+          <h3>{simple ? "Connections" : "Host connection report"}</h3>
+          <p className="source-label">
+            {simple
+              ? "Select a connection to view devices and reported readings."
+              : "USB / Thunderbolt / network / displays / NVMe · host-reported properties"}
+          </p>
         </div>
         <button
           className="button primary"
@@ -302,7 +501,13 @@ function ConnectionView({
           Refresh port map
         </button>
       </div>
-      <p className="source-label">{platform === "Linux" ? "lsusb / sysfs" : "System Profiler / IORegistry"} · reported hierarchy and properties · actual electrical current is not measured</p>
+      <p className="source-label" hidden={simple}>
+        {platform === "Linux"
+          ? "lsusb / sysfs"
+          : "System Profiler / IORegistry"}{" "}
+        · reported hierarchy and properties · actual electrical current is not
+        measured
+      </p>
       {result ? (
         <>
           {result.parseError && (
@@ -311,12 +516,24 @@ function ConnectionView({
               the transcript.
             </div>
           )}
-          <PortTree report={result}/>
-          {result.fields !== null && <details className="port-properties"><summary>Complete original connection report</summary><FieldTable value={result.fields} source={`${commandLine(result.record)} · ${timestamp(result.record.startedAt)}`} title="Complete connection fields"/></details>}
+          <PortTree report={result} simple={simple} />
+          {result.fields !== null && (
+            <ModeDetails
+              simple={simple}
+              title="Complete original connection report"
+            >
+              <FieldTable
+                value={result.fields}
+                source={`${commandLine(result.record)} · ${timestamp(result.record.startedAt)}`}
+                title="Complete connection fields"
+              />
+            </ModeDetails>
+          )}
         </>
       ) : (
         <EmptyState icon="link" title="Connection report not collected">
-          Collect available host connection properties. No device reset or sector scan is performed.
+          Collect available host connection properties. No device reset or
+          sector scan is performed.
         </EmptyState>
       )}
     </>
@@ -324,6 +541,7 @@ function ConnectionView({
 }
 
 function ToolsView({
+  simple = false,
   tools,
   busy,
   refresh,
@@ -332,6 +550,7 @@ function ToolsView({
   acquisition,
   images,
 }: {
+  simple?: boolean;
   tools: ToolReport[];
   busy: boolean;
   refresh: () => void;
@@ -344,7 +563,7 @@ function ToolsView({
     <>
       <div className="section-heading">
         <div>
-          <h3>Tool inventory</h3>
+          <h3>{simple ? "Available functions" : "Tool inventory"}</h3>
           <p className="source-label">
             Installed tools and implemented adapters are shown separately
           </p>
@@ -353,7 +572,7 @@ function ToolsView({
           {tools.filter((tool) => tool.available).length} located
         </span>
       </div>
-      <div className="tool-list">
+      <div className={`tool-list ${simple ? "simple-tool-list" : ""}`}>
         {tools.map((tool) => (
           <article className="tool-row" key={tool.key}>
             <div className="tool-icon">
@@ -364,7 +583,14 @@ function ToolsView({
             </div>
             <div className="tool-description">
               <h4>
-                {tool.name}
+                {simple
+                  ? ({
+                      ddrescue: "Create disk images",
+                      "drc-tsk": "Read images and recover files",
+                      smartctl: "Read SMART information",
+                      system_profiler: "Read connections",
+                    }[tool.key] ?? tool.name)
+                  : tool.name}
                 <span
                   className={`small-tag ${tool.available ? "" : "muted"}`}
                   data-available={tool.available}
@@ -373,9 +599,17 @@ function ToolsView({
                 </span>
               </h4>
               <p>{tool.purpose}</p>
-              <code>
-                {tool.path ?? "No executable at the configured locations"}
-              </code>
+              {simple && (
+                <p>
+                  {tool.name} ·{" "}
+                  {tool.implemented ? "Integrated" : "Adapter pending"}
+                </p>
+              )}
+              <ModeDetails simple={simple} title="Executable location">
+                <code>
+                  {tool.path ?? "No executable at the configured locations"}
+                </code>
+              </ModeDetails>
             </div>
             <div className="tool-action">
               {tool.implemented ? (
@@ -394,7 +628,14 @@ function ToolsView({
                             : refresh
                   }
                 >
-                  Open
+                  {simple
+                    ? ({
+                        ddrescue: "Create image…",
+                        "drc-tsk": "Open image…",
+                        smartctl: "SMART readings",
+                        system_profiler: "Port map",
+                      }[tool.key] ?? "Refresh devices")
+                    : "Open"}
                   <Icon name="arrow" size={14} />
                 </button>
               ) : (
@@ -422,28 +663,117 @@ function ToolsView({
 }
 
 export function App() {
-  const [experience, setExperience] = useState<"easy" | "professional">(() => localStorage.getItem("drc.experience") === "professional" ? "professional" : "easy");
+  const nativeMac = native && /Mac/.test(navigator.platform);
+  const [windowPresentation, setWindowPresentation] =
+    useState<WindowPresentation | null>(null);
+  useEffect(() => {
+    if (!nativeMac) return;
+    let disposed = false;
+    let receivedEvent = false;
+    let unlisten: (() => void) | undefined;
+    void listen<WindowPresentation>(
+      "workspace-window-presentation",
+      ({ payload }) => {
+        receivedEvent = true;
+        if (!disposed) setWindowPresentation(payload);
+      },
+    )
+      .then((stop) => {
+        if (disposed) stop();
+        else unlisten = stop;
+      })
+      .catch((error) => console.warn("Window presentation listener:", error));
+    void (async () => {
+      // Initial presentation must not depend on event-listener registration.
+      // The native IPC handler can still be finishing startup at first paint.
+      for (const delay of [0, 150, 450, 900]) {
+        if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+        if (disposed || receivedEvent) return;
+        try {
+          const initial = await bridge.windowPresentation();
+          // A live transition wins over an older initial reply.
+          if (!disposed && !receivedEvent) setWindowPresentation(initial);
+          return;
+        } catch (error) {
+          if (delay === 900)
+            console.warn("Initial window presentation:", error);
+        }
+      }
+    })();
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [nativeMac]);
+  const [sidebarVisible, setSidebarVisible] = useState(
+    () => window.innerWidth >= 900,
+  );
+  useEffect(() => {
+    const width = window.matchMedia("(min-width: 900px)");
+    const adapt = () => setSidebarVisible(width.matches);
+    width.addEventListener("change", adapt);
+    return () => width.removeEventListener("change", adapt);
+  }, []);
+  const [experience, setExperience] = useState<"easy" | "professional">(() =>
+    localStorage.getItem("drc.experience") === "professional"
+      ? "professional"
+      : "easy",
+  );
   const [evidenceOpen, setEvidenceOpen] = useState(false);
   const closeEvidence = useCallback(() => setEvidenceOpen(false), []);
   const [hostEvidence, setHostEvidence] = useState<Json[]>([]);
   const [referenceOpen, setReferenceOpen] = useState(false);
   const closeReference = useCallback(() => setReferenceOpen(false), []);
-  const [easyReading, setEasyReading] = useState<"smart" | "connection" | null>(null);
+  const [easyReading, setEasyReading] = useState<"smart" | "connection" | null>(
+    null,
+  );
+  const [workspaceOpen, setWorkspaceOpen] = useState(false);
+  const closeWorkspace = useCallback(() => setWorkspaceOpen(false), []);
+  function openPanel(
+    panel:
+      | "workspace"
+      | "device"
+      | "recovery"
+      | "acquisition"
+      | "image"
+      | "reference"
+      | "session"
+      | "evidence"
+      | "connection"
+      | "smart"
+      | null,
+  ) {
+    setWorkspaceOpen(panel === "workspace");
+    if (panel === "device") setTab("device");
+    setRecoveryOpen(panel === "recovery");
+    setAcquisitionOpen(panel === "acquisition");
+    setImageOpen(panel === "image");
+    setReferenceOpen(panel === "reference");
+    setSessionOpen(panel === "session");
+    setEvidenceOpen(panel === "evidence");
+    setEasyReading(panel === "connection" || panel === "smart" ? panel : null);
+    if (window.innerWidth < 900) setSidebarVisible(false);
+  }
   const closeEasyReading = useCallback(() => setEasyReading(null), []);
-  const changeExperience = (value: "easy" | "professional") => { setExperience(value); localStorage.setItem("drc.experience", value); };
+  const changeExperience = (value: "easy" | "professional") => {
+    setExperience(value);
+    localStorage.setItem("drc.experience", value);
+  };
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [originalImport, setOriginalImport] = useState<string | null>(null);
   const [archived, setArchived] = useState(false);
   const archivedRef = useRef(false);
   const [sessionOpen, setSessionOpen] = useState(false);
   const [acquisitionOpen, setAcquisitionOpen] = useState(false);
-  const [recoveryOpen,setRecoveryOpen]=useState(false);
-  const [recoveryRun,setRecoveryRun]=useState<RecoveryRun|null>(null);
-  const [recoveryRuns,setRecoveryRuns]=useState<RecoveryRun[]>([]);
-  const [recoveryRunning,setRecoveryRunning]=useState(false);
-  const [recoveryStopping,setRecoveryStopping]=useState<string|null>(null);
-  const [recoverySource,setRecoverySource]=useState<Device|undefined>(undefined);
-  const closeRecovery=useCallback(()=>setRecoveryOpen(false),[]);
+  const [recoveryOpen, setRecoveryOpen] = useState(false);
+  const [recoveryRun, setRecoveryRun] = useState<RecoveryRun | null>(null);
+  const [recoveryRuns, setRecoveryRuns] = useState<RecoveryRun[]>([]);
+  const [recoveryRunning, setRecoveryRunning] = useState(false);
+  const [recoveryStopping, setRecoveryStopping] = useState<string | null>(null);
+  const [recoverySource, setRecoverySource] = useState<Device | undefined>(
+    undefined,
+  );
+  const closeRecovery = useCallback(() => setRecoveryOpen(false), []);
   const [imageOpen, setImageOpen] = useState(false);
   const [imageReports, setImageReports] = useState<Json[]>([]);
   const [extractions, setExtractions] = useState<ExtractionJob[]>([]);
@@ -455,7 +785,9 @@ export function App() {
   const acquiringRef = useRef(false);
   const [snapshot, setSnapshot] = useState<Discovery | null>(null);
   const [selection, setSelection] = useState<string | null>(null);
-  const [observationSelection, setObservationSelection] = useState<string | null>(null);
+  const [observationSelection, setObservationSelection] = useState<
+    string | null
+  >(null);
   const [tab, setTab] = useState<Tab>("device");
   const [records, setRecords] = useState<CommandRecord[]>([]);
   const [events, setEvents] = useState<DeviceEvent[]>([]);
@@ -484,27 +816,48 @@ export function App() {
   const watcherRef = useRef(false);
   const device = snapshot?.devices.find((item) => item.id === selection);
   const observedMedia = snapshot?.unavailableMedia ?? [];
-  const observedSelection = observedMedia.find(item => item.id === observationSelection);
-  const menuNavigate = useRef<(value: {section: string; deviceId: string | null}) => Promise<void>>(async () => {});
-  menuNavigate.current = async ({section, deviceId}) => {
+  const observedSelection = observedMedia.find(
+    (item) => item.id === observationSelection,
+  );
+  const menuNavigate = useRef<
+    (value: { section: string; deviceId: string | null }) => Promise<void>
+  >(async () => {});
+  menuNavigate.current = async ({ section, deviceId }) => {
     if (archivedRef.current) await liveSession();
-    if (deviceId && inventoryRef.current?.devices.some(d => d.id === deviceId)) {
+    if (
+      deviceId &&
+      inventoryRef.current?.devices.some((d) => d.id === deviceId)
+    ) {
       setObservationSelection(null);
       selectionRef.current = deviceId;
       setSelection(deviceId);
     }
-    if (section === "device") { changeExperience("professional"); setTab("device"); }
-    if (section === "ports") setEasyReading("connection");
-    if (section === "acquisition") setAcquisitionOpen(true);
+    if (section === "device") {
+      openPanel("device");
+      setTab("device");
+    }
+    if (section === "ports") openPanel("connection");
+    if (section === "acquisition") openPanel("acquisition");
   };
   useEffect(() => {
     if (!native) return;
     let stopped = false;
     let unlisten: (() => void) | undefined;
-    void listen<{section: string; deviceId: string | null}>("menu-bar-navigate", event => {
-      void menuNavigate.current(event.payload).catch(error => setError(errorText(error)));
-    }).then(stop => { if (stopped) stop(); else unlisten = stop; });
-    return () => { stopped = true; unlisten?.(); };
+    void listen<{ section: string; deviceId: string | null }>(
+      "menu-bar-navigate",
+      (event) => {
+        void menuNavigate
+          .current(event.payload)
+          .catch((error) => setError(errorText(error)));
+      },
+    ).then((stop) => {
+      if (stopped) stop();
+      else unlisten = stop;
+    });
+    return () => {
+      stopped = true;
+      unlisten?.();
+    };
   }, []);
 
   const updateJob = useCallback((incoming: AcquisitionJob) => {
@@ -536,10 +889,19 @@ export function App() {
     }
   }, []);
 
-  const updateRecovery=useCallback((incoming:RecoveryRun)=>{
-    setRecoveryRun(current=>current?.id===incoming.id&&((current.updatedAt>incoming.updatedAt)||(current.state!=="running"&&incoming.state==="running"))?current:incoming);
-    setRecoveryRuns(items=>[...items.filter(r=>r.id!==incoming.id),incoming]);
-  },[]);
+  const updateRecovery = useCallback((incoming: RecoveryRun) => {
+    setRecoveryRun((current) =>
+      current?.id === incoming.id &&
+      (current.updatedAt > incoming.updatedAt ||
+        (current.state !== "running" && incoming.state === "running"))
+        ? current
+        : incoming,
+    );
+    setRecoveryRuns((items) => [
+      ...items.filter((r) => r.id !== incoming.id),
+      incoming,
+    ]);
+  }, []);
 
   const updateExtraction = useCallback((incoming: ExtractionJob) => {
     const previous = extractionRef.current.find((j) => j.id === incoming.id);
@@ -601,7 +963,11 @@ export function App() {
       inventoryRef.current = next;
       selectionRef.current = chosen;
       setSelection(chosen);
-      setObservationSelection(current => next.unavailableMedia?.some(item => item.id === current) ? current : null);
+      setObservationSelection((current) =>
+        next.unavailableMedia?.some((item) => item.id === current)
+          ? current
+          : null,
+      );
       if (previous && !replacement)
         setNotice(
           "The selected device disappeared or its reported descriptor changed. Select a device from the current snapshot.",
@@ -628,7 +994,7 @@ export function App() {
           setOriginalImport(saved.originalImport);
           setImageReports(saved.imageReports ?? []);
           setHostEvidence(saved.hostEvidence ?? []);
-          setRecoveryRuns(saved.recoveryRuns??[]);
+          setRecoveryRuns(saved.recoveryRuns ?? []);
           setRecoveryRun(savedRecovery(saved.recoveryRuns?.at(-1)));
           setRecords(saved.commandRecords);
           setEvents(saved.connectionEvents);
@@ -641,17 +1007,44 @@ export function App() {
           setExtractions(extractionRef.current);
         }
         const stop = await subscribe({
-          recovery: incoming=>{if(active&&!archivedRef.current)updateRecovery(incoming);},
-          discovery: (next) => {
-            if (!active || archivedRef.current || (inventoryRef.current?.observedAt ?? 0) > next.observedAt) return;
-            const previous = inventoryRef.current?.devices.find(d => d.id === selectionRef.current);
-            const replacement = next.devices.find(d => d.id === previous?.id && d.identityKey === previous.identityKey);
-            const chosen = previous ? replacement?.id ?? null : inventoryRef.current ? null : (next.devices.find(d => d.internal === false) ?? next.devices[0])?.id ?? null;
-            inventoryRef.current = next; selectionRef.current = chosen;
-            setSnapshot(next); setSelection(chosen);
-            setObservationSelection(current => next.unavailableMedia?.some(item => item.id === current) ? current : null);
+          recovery: (incoming) => {
+            if (active && !archivedRef.current) updateRecovery(incoming);
           },
-          connection: (report) => { if (active && !archivedRef.current) setConnection(report); },
+          discovery: (next) => {
+            if (
+              !active ||
+              archivedRef.current ||
+              (inventoryRef.current?.observedAt ?? 0) > next.observedAt
+            )
+              return;
+            const previous = inventoryRef.current?.devices.find(
+              (d) => d.id === selectionRef.current,
+            );
+            const replacement = next.devices.find(
+              (d) =>
+                d.id === previous?.id && d.identityKey === previous.identityKey,
+            );
+            const chosen = previous
+              ? (replacement?.id ?? null)
+              : inventoryRef.current
+                ? null
+                : ((
+                    next.devices.find((d) => d.internal === false) ??
+                    next.devices[0]
+                  )?.id ?? null);
+            inventoryRef.current = next;
+            selectionRef.current = chosen;
+            setSnapshot(next);
+            setSelection(chosen);
+            setObservationSelection((current) =>
+              next.unavailableMedia?.some((item) => item.id === current)
+                ? current
+                : null,
+            );
+          },
+          connection: (report) => {
+            if (active && !archivedRef.current) setConnection(report);
+          },
           command: (record) => {
             if (!active) return;
             if (!archivedRef.current) {
@@ -722,14 +1115,51 @@ export function App() {
     };
   }, [refresh, updateJob, updateRecovery]);
 
-  useEffect(()=>{if(!native)return;let disposed=false;let stop:(()=>void)|undefined;void listen<string>("recovery-stopping",event=>setRecoveryStopping(event.payload)).then(fn=>{if(disposed)fn();else stop=fn;});return()=>{disposed=true;stop?.();};},[]);
+  useEffect(() => {
+    if (!native) return;
+    let disposed = false;
+    let stop: (() => void) | undefined;
+    void listen<string>("recovery-stopping", (event) =>
+      setRecoveryStopping(event.payload),
+    ).then((fn) => {
+      if (disposed) fn();
+      else stop = fn;
+    });
+    return () => {
+      disposed = true;
+      stop?.();
+    };
+  }, []);
 
-  async function startRecovery(key:string,options:RecoveryOptions){
-    if(busyRef.current||acquiringRef.current||extractingRef.current||archivedRef.current)throw new Error("Finish the current operation or return to the live session first.");
-    busyRef.current=true;setRecoveryRunning(true);setRecoveryStopping(null);setRecoveryRun(null);setBusy("Running recovery checks");
-    try{updateRecovery(await bridge.recoveryChecks(key,options));}finally{busyRef.current=false;setRecoveryRunning(false);setBusy(null);if(pendingRefresh.current)void refreshRef.current();}
+  async function startRecovery(key: string, options: RecoveryOptions) {
+    if (
+      busyRef.current ||
+      acquiringRef.current ||
+      extractingRef.current ||
+      archivedRef.current
+    )
+      throw new Error(
+        "Finish the current operation or return to the live session first.",
+      );
+    busyRef.current = true;
+    setRecoveryRunning(true);
+    setRecoveryStopping(null);
+    setRecoveryRun(null);
+    setBusy("Running recovery checks");
+    try {
+      updateRecovery(await bridge.recoveryChecks(key, options));
+    } finally {
+      busyRef.current = false;
+      setRecoveryRunning(false);
+      setBusy(null);
+      if (pendingRefresh.current) void refreshRef.current();
+    }
   }
-  function continueRecovery(source:Device){setRecoverySource(source);setRecoveryOpen(false);setAcquisitionOpen(true);}
+  function continueRecovery(source: Device) {
+    setRecoverySource(source);
+    setRecoveryOpen(false);
+    openPanel("acquisition");
+  }
 
   useEffect(() => {
     if (!notice) return;
@@ -802,13 +1232,26 @@ export function App() {
     }
   }
 
-  async function collectHostEvidence(kind: "topology" | "kernel"): Promise<QueryResult> {
-    if (archivedRef.current) throw new Error("Return to the live session before collecting evidence.");
+  async function collectHostEvidence(
+    kind: "topology" | "kernel",
+  ): Promise<QueryResult> {
+    if (archivedRef.current)
+      throw new Error("Return to the live session before collecting evidence.");
     const activeData = acquiringRef.current || extractingRef.current;
     if (kind === "kernel") return bridge.hostEvidence(kind);
-    if (busyRef.current || activeData) throw new Error("Wait for the active operation before collecting topology.");
-    busyRef.current = true; setBusy("Collecting host evidence");
-    try { return await bridge.hostEvidence(kind); } finally { busyRef.current=false; setBusy(null); if(pendingRefresh.current) void refreshRef.current(); }
+    if (busyRef.current || activeData)
+      throw new Error(
+        "Wait for the active operation before collecting topology.",
+      );
+    busyRef.current = true;
+    setBusy("Collecting host evidence");
+    try {
+      return await bridge.hostEvidence(kind);
+    } finally {
+      busyRef.current = false;
+      setBusy(null);
+      if (pendingRefresh.current) void refreshRef.current();
+    }
   }
 
   async function runConnection() {
@@ -882,8 +1325,8 @@ export function App() {
     setSessionId(saved.id);
     setOriginalImport(saved.originalImport);
     setImageReports(saved.imageReports ?? []);
-          setHostEvidence(saved.hostEvidence ?? []);
-    setRecoveryRuns(saved.recoveryRuns??[]);
+    setHostEvidence(saved.hostEvidence ?? []);
+    setRecoveryRuns(saved.recoveryRuns ?? []);
     setRecoveryRun(savedRecovery(saved.recoveryRuns?.at(-1)));
     setSnapshot(saved.snapshot);
     setRecords(saved.commandRecords);
@@ -918,8 +1361,27 @@ export function App() {
     selectionRef.current = null;
     await refresh();
   }
+  useEffect(() => {
+    const shortcut = (event: KeyboardEvent) => {
+      if (
+        !(event.metaKey || event.ctrlKey) ||
+        document.querySelector('[role="dialog"]')
+      )
+        return;
+      if (event.key === "\\") {
+        event.preventDefault();
+        setSidebarVisible((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", shortcut);
+    return () => window.removeEventListener("keydown", shortcut);
+  }, []);
+
   const closeSessions = useCallback(() => setSessionOpen(false), []);
-  const closeAcquisition = useCallback(() => {setAcquisitionOpen(false);setRecoverySource(undefined);}, []);
+  const closeAcquisition = useCallback(() => {
+    setAcquisitionOpen(false);
+    setRecoverySource(undefined);
+  }, []);
 
   const visibleDevices = (snapshot?.devices ?? []).filter((item) =>
     `${item.id} ${item.name} ${item.protocol ?? ""}`
@@ -928,88 +1390,92 @@ export function App() {
   );
   const groups = [
     {
-      label: "EXTERNAL MEDIA",
+      label: "External",
       values: visibleDevices.filter((item) => item.internal === false),
     },
     {
-      label: "INTERNAL MEDIA",
+      label: "Internal",
       values: visibleDevices.filter((item) => item.internal === true),
     },
     {
-      label: "LOCATION NOT REPORTED",
+      label: "Location not reported",
       values: visibleDevices.filter((item) => item.internal === null),
     },
   ];
 
   return (
     <div className={`app-shell experience-${experience}`}>
-      <Hints/>
-      <header className="app-header">
+      <Hints />
+      <header
+        className={`app-header${nativeMac ? ` macos-titlebar controls-${windowPresentation?.controlsSide ?? "pending"}${windowPresentation?.fullscreen ? " is-fullscreen" : ""}` : ""}`}
+        aria-label="Workspace toolbar"
+        data-tauri-drag-region="deep"
+      >
+        <button
+          className="toolbar-icon"
+          aria-label={sidebarVisible ? "Hide sidebar" : "Show sidebar"}
+          aria-expanded={sidebarVisible}
+          data-hint="Show or hide devices and workspace tools."
+          onClick={() => setSidebarVisible((v) => !v)}
+        >
+          <Icon name="sidebar" size={18} />
+        </button>
         <div className="brand">
-          <span className="brand-mark">
-            <Icon name="drive" size={23} />
-          </span>
           <span className="brand-name">DRC</span>
-          <span className="brand-divider" />
-          <span className="brand-subtitle">Disk Recovery Control</span>
-          <span className="version">{version}</span>
+          <span className="brand-subtitle">Disk Resource Console</span>
         </div>
-        <div className="header-actions">
-          <button className="button primary" disabled={!native||!!busy&&!recoveryRunning} onClick={()=>setRecoveryOpen(true)}><Icon name={recoveryRunning?"refresh":"shield"} className={recoveryRunning?"spin":""}/>Recovery</button>
-          <div className="mode-switch" aria-label="Workspace experience"><button aria-pressed={experience === "easy"} onClick={() => changeExperience("easy")}>Easy</button><button aria-pressed={experience === "professional"} onClick={() => changeExperience("professional")}>Professional</button></div>
-          <button className="button" onClick={() => setReferenceOpen(true)}><Icon name="file" />Reference</button>
-          <button className="button" data-hint="Open the visual USB, hub and enclosure hierarchy. Collects host metadata only when no report is saved." onClick={() => { setEasyReading("connection"); if (!connection && !archived) void runConnection(); }}><Icon name="hub"/>Port map</button>
-          {tools.some(t=>t.key === "lsblk") && <button className="button" disabled={!native || archived} onClick={() => setEvidenceOpen(true)}><Icon name="link"/>Host evidence</button>}
+        <div className="toolbar-spacer" />
+        <div className="mode-switch" aria-label="Workspace experience">
           <button
-            className="button"
-            disabled={!native || archived}
-            hidden={experience === "easy"}
-            onClick={() => setImageOpen(true)}
+            aria-pressed={experience === "easy"}
+            onClick={() => changeExperience("easy")}
           >
-            <Icon name="file" />
-            Images
+            Easy
           </button>
           <button
-            className="button"
-            disabled={!native || archived}
-            hidden={experience === "easy"}
-            onClick={() => setAcquisitionOpen(true)}
+            aria-pressed={experience === "professional"}
+            onClick={() => changeExperience("professional")}
           >
-            <Icon name="drive" />
-            Raw acquisition
-          </button>
-          <button
-            className="button"
-            disabled={!native || !sessionId}
-            onClick={() => setSessionOpen(true)}
-          >
-            <Icon name="file" />
-            Sessions
-          </button>
-          <button className="policy-badge" onClick={() => setPolicyOpen(true)}>
-            <Icon name="shield" size={15} />
-            <span>Read-only policy</span>
-            <span className="permission-code">r--</span>
-          </button>
-          <button className="button" disabled={!snapshot} onClick={copySession} hidden={experience === "easy"}>
-            <Icon name="copy" />
-            Copy session JSON
-          </button>
-          <button
-            className="button"
-            disabled={!!busy || !native || archived}
-            onClick={() => void refresh()}
-          >
-            <Icon name="refresh" className={busy ? "spin" : ""} />
-            Refresh
+            Professional
           </button>
         </div>
+        <span className="toolbar-divider" />
+        <button
+          className="button primary"
+          disabled={!native || (!!busy && !recoveryRunning)}
+          onClick={() => openPanel("recovery")}
+        >
+          <Icon
+            name={recoveryRunning ? "refresh" : "shield"}
+            className={recoveryRunning ? "spin" : ""}
+          />
+          {recoveryRunning ? "View checks" : "Recovery checks"}
+        </button>
+        <button
+          className="toolbar-icon policy-control"
+          aria-label="Read-only policy"
+          data-hint="DRC source-write policy and the limits of operating-system protection."
+          onClick={() => setPolicyOpen(true)}
+        >
+          <Icon name="shield" size={17} />
+        </button>
+        <button
+          className="toolbar-icon"
+          aria-label="Refresh devices"
+          data-hint="Refresh device metadata. Does not start SMART tests or read sectors."
+          disabled={!!busy || !native || archived}
+          onClick={() => void refresh()}
+        >
+          <Icon name="refresh" className={busy ? "spin" : ""} size={17} />
+        </button>
       </header>
 
-      <div className="main-layout">
+      <div
+        className={`main-layout ${sidebarVisible ? "sidebar-visible" : "sidebar-hidden"}`}
+      >
         <aside className="sidebar">
           <div className="sidebar-title">
-            <span className="eyebrow">CONNECTED MEDIA</span>
+            <span className="sidebar-section-label">Devices</span>
             <span className="sidebar-count">
               {snapshot ? snapshot.devices.length + observedMedia.length : "—"}
             </span>
@@ -1034,6 +1500,7 @@ export function App() {
                         key={item.token}
                         className={`device-item ${selection === item.id ? "selected" : ""}`}
                         onClick={() => {
+                          openPanel(null);
                           setObservationSelection(null);
                           setSelection(item.id);
                           selectionRef.current = item.id;
@@ -1048,7 +1515,7 @@ export function App() {
                           </span>
                           <span className="device-meta">
                             {item.id} <span>·</span>{" "}
-                            <ByteValue value={item.sizeBytes}/>
+                            <ByteValue value={item.sizeBytes} />
                           </span>
                           <span className="device-protocol">
                             {item.protocol ?? "Protocol not reported"}
@@ -1078,15 +1545,114 @@ export function App() {
                 </p>
               </div>
             )}
-            {observedMedia.filter(item => `${item.name} ${item.bsdName ?? ""}`.toLowerCase().includes(query.toLowerCase())).length > 0 && <div className="device-group observed-device-group">
-              <h2>Detected · unavailable for imaging</h2>
-              {observedMedia.filter(item => `${item.name} ${item.bsdName ?? ""}`.toLowerCase().includes(query.toLowerCase())).map(item => <button key={item.id} className={`device-item ${observedSelection?.id === item.id ? "selected" : ""}`} onClick={() => { setObservationSelection(item.id); setSelection(null); selectionRef.current = null; }} data-hint="Published host metadata. This is not a usable physical disk source, so no scan or copy is offered.">
-                <div className="device-icon"><Icon name="usb" size={22}/></div><div className="device-summary"><span className="device-name">{item.name}</span><span className="device-meta"><ByteValue value={item.sizeBytes}/></span><span className="device-protocol">{observationLabel(item.stage)}</span></div><Icon name="chevron" size={12}/>
-              </button>)}
-            </div>}
+            {observedMedia.filter((item) =>
+              `${item.name} ${item.bsdName ?? ""}`
+                .toLowerCase()
+                .includes(query.toLowerCase()),
+            ).length > 0 && (
+              <div className="device-group observed-device-group">
+                <h2>Detected without a disk source</h2>
+                {observedMedia
+                  .filter((item) =>
+                    `${item.name} ${item.bsdName ?? ""}`
+                      .toLowerCase()
+                      .includes(query.toLowerCase()),
+                  )
+                  .map((item) => (
+                    <button
+                      key={item.id}
+                      className={`device-item ${observedSelection?.id === item.id ? "selected" : ""}`}
+                      onClick={() => {
+                        openPanel(null);
+                        setObservationSelection(item.id);
+                        setSelection(null);
+                        selectionRef.current = null;
+                      }}
+                      data-hint="Published host metadata. This is not a usable physical disk source, so no scan or copy is offered."
+                    >
+                      <div className="device-icon">
+                        <Icon name="usb" size={22} />
+                      </div>
+                      <div className="device-summary">
+                        <span className="device-name">{item.name}</span>
+                        <span className="device-meta">
+                          <ByteValue value={item.sizeBytes} />
+                        </span>
+                        <span className="device-protocol">
+                          {observationLabel(item.stage)}
+                        </span>
+                      </div>
+                      <Icon name="chevron" size={12} />
+                    </button>
+                  ))}
+              </div>
+            )}
           </div>
+          <nav className="workspace-navigation" aria-label="Workspace tools">
+            <h2>{experience === "easy" ? "Tasks" : "Workspace"}</h2>
+            <button
+              disabled={!native || archived}
+              aria-current={acquisitionOpen ? "page" : undefined}
+              onClick={() => openPanel("acquisition")}
+            >
+              <Icon name="copy" />
+              Create disk image
+            </button>
+            <button
+              disabled={!native || archived}
+              aria-current={imageOpen ? "page" : undefined}
+              onClick={() => openPanel("image")}
+            >
+              <Icon name="folder" />
+              {experience === "easy" ? "Browse disk image" : "Image workspace"}
+            </button>
+            <button
+              aria-current={easyReading === "connection" ? "page" : undefined}
+              onClick={() => {
+                openPanel("connection");
+                if (!connection && !archived) void runConnection();
+              }}
+              data-hint="Inspect the hierarchy of ports, hubs, enclosures and reported storage."
+            >
+              <Icon name="hub" />
+              {experience === "easy" ? "Connections" : "Ports & enclosures"}
+            </button>
+            {tools.some((t) => t.key === "lsblk") && (
+              <button
+                disabled={!native || archived}
+                aria-current={evidenceOpen ? "page" : undefined}
+                onClick={() => openPanel("evidence")}
+              >
+                <Icon name="link" />
+                Host evidence
+              </button>
+            )}
+            <button
+              aria-current={referenceOpen ? "page" : undefined}
+              onClick={() => openPanel("reference")}
+            >
+              <Icon name="file" />
+              Command reference
+            </button>
+            <button
+              disabled={!native || !sessionId}
+              aria-current={sessionOpen ? "page" : undefined}
+              onClick={() => openPanel("session")}
+            >
+              <Icon name="clock" />
+              {experience === "easy" ? "Saved sessions" : "Sessions"}
+            </button>
+            {experience === "professional" && (
+              <button disabled={!snapshot} onClick={copySession}>
+                <Icon name="copy" />
+                Copy session JSON
+              </button>
+            )}
+          </nav>
           <div className="sidebar-bottom">
             <button
+              role="switch"
+              aria-checked={watching}
               className={`watch-control ${watching ? "is-on" : ""}`}
               disabled={!native}
               onClick={() => void toggleWatch()}
@@ -1100,23 +1666,50 @@ export function App() {
                 <span />
               </span>
             </button>
-            <p>
-              Metadata queries only.
-              <br />
-              No automatic SMART or sector scans.
-            </p>
-            <div className="brand-signature">6d 37 6d 64 2d 64</div>
+            <p>Metadata only · scans are explicit</p>
           </div>
         </aside>
+        {sidebarVisible && (
+          <button
+            className="sidebar-dismiss"
+            aria-label="Close sidebar"
+            onClick={() => setSidebarVisible(false)}
+          />
+        )}
 
         <main className="workspace">
+          <div id="workspace-panel-root" />
           <div className="workspace-bar">
-            <div className="breadcrumb">
-              <Icon name="grid" size={14} />
-              <span>Storage workspace</span>
+            <nav className="breadcrumb" aria-label="Workspace navigation">
+              <button
+                onClick={() => openPanel("workspace")}
+                aria-current={workspaceOpen ? "page" : undefined}
+                data-hint="Open the storage overview: connected disks, host observations and image tools."
+              >
+                <Icon name="grid" size={14} />
+                <span>Storage workspace</span>
+              </button>
               <Icon name="chevron" size={12} />
-              <code>{observedSelection ? "Host observation" : device ? `/dev/${device.id}` : "No selection"}</code>
-            </div>
+              {device || observedSelection ? (
+                <button
+                  onClick={() => {
+                    openPanel(device ? "device" : null);
+                    setTab("device");
+                  }}
+                  data-hint={
+                    device
+                      ? "Open this disk's complete readings. This page is available in both modes."
+                      : "Open the selected host observation and its original fields."
+                  }
+                >
+                  <code>
+                    {device ? `/dev/${device.id}` : "Host observation"}
+                  </code>
+                </button>
+              ) : (
+                <span>No selection</span>
+              )}
+            </nav>
             <span className="snapshot-time">
               <Icon name="clock" size={12} />
               {snapshot
@@ -1167,7 +1760,48 @@ export function App() {
             </div>
           ))}
 
-          {observedSelection ? <UnavailableMediaView recover={()=>setRecoveryOpen(true)} item={observedSelection} refresh={() => void refresh()} ports={() => { setEasyReading("connection"); void runConnection(); }} disabled={!!busy || !native || archived}/> : experience === "easy" ? <EasyWorkspace device={device} smart={device ? smart[device.identityKey] : undefined} jobs={jobs} tools={tools} disabled={!!busy || !native || archived} inspect={() => { setEasyReading("smart"); void runSmart(); }} connections={() => { setEasyReading("connection"); void runConnection(); }} acquire={() => setAcquisitionOpen(true)} images={() => setImageOpen(true)} details={() => { changeExperience("professional"); setTab("device"); }} reference={() => setReferenceOpen(true)} /> : device ? (
+          {observedSelection ? (
+            <UnavailableMediaView
+              recover={() => openPanel("recovery")}
+              item={observedSelection}
+              refresh={() => void refresh()}
+              ports={() => {
+                openPanel("connection");
+                void runConnection();
+              }}
+              disabled={!!busy || !native || archived}
+            />
+          ) : experience === "easy" && tab === "device" ? (
+            <EasyWorkspace
+              device={device}
+              smart={device ? smart[device.identityKey] : undefined}
+              jobs={jobs}
+              tools={tools}
+              disabled={!!busy || !native || archived}
+              inspect={() => {
+                openPanel("smart");
+                void runSmart();
+              }}
+              connections={() => {
+                openPanel("connection");
+                void runConnection();
+              }}
+              acquire={() => openPanel("acquisition")}
+              images={() => openPanel("image")}
+              navigation={
+                device && (
+                  <DeviceTabs
+                    tab={tab}
+                    select={setTab}
+                    partitions={device.partitions.length}
+                    simple
+                  />
+                )
+              }
+              platform={snapshot?.platform ?? "macOS"}
+              reference={() => openPanel("reference")}
+            />
+          ) : device ? (
             <>
               <div className="device-heading">
                 <div className="device-heading-icon">
@@ -1175,7 +1809,7 @@ export function App() {
                 </div>
                 <div className="device-heading-text">
                   <div className="device-kicker">
-                    <span className="eyebrow">PHYSICAL DEVICE</span>
+                    <span className="eyebrow">Physical disk</span>
                     <span
                       className="small-tag"
                       data-location={
@@ -1203,35 +1837,18 @@ export function App() {
                   </div>
                 </div>
                 <div className="device-heading-capacity">
-                  <strong><ByteValue value={device.sizeBytes}/></strong>
-                  <span>
-                    Hover or focus for exact bytes
-                  </span>
+                  <strong>
+                    <ByteValue value={device.sizeBytes} />
+                  </strong>
+                  <span>Reported capacity</span>
                 </div>
               </div>
-              <nav className="workspace-tabs" aria-label="Device details">
-                {tabs.map((item) => (
-                  <button
-                    key={item.key}
-                    className={tab === item.key ? "active" : ""}
-                    data-section={item.key}
-                    aria-pressed={tab === item.key}
-                    onClick={() => setTab(item.key)}
-                  >
-                    <Icon name={item.icon} />
-                    {item.label}
-                    {item.key === "partitions" && (
-                      <span className="tab-count">
-                        {device.partitions.length}
-                      </span>
-                    )}
-                  </button>
-                ))}
-                <div className="tab-end">
-                  <Icon name="lock" size={12} />
-                  <span>Write commands unavailable</span>
-                </div>
-              </nav>
+              <DeviceTabs
+                tab={tab}
+                select={setTab}
+                partitions={device.partitions.length}
+                simple={experience === "easy"}
+              />
               <div className="workspace-content" key={`${device.id}:${tab}`}>
                 {device.infoError && (
                   <div className="error-box">
@@ -1244,7 +1861,11 @@ export function App() {
                       <Fact
                         label="BUS PROTOCOL"
                         value={device.protocol ?? "Not reported"}
-                        detail={snapshot?.platform === "Linux" ? "Reported by lsblk" : "Reported by diskutil"}
+                        detail={
+                          snapshot?.platform === "Linux"
+                            ? "Reported by lsblk"
+                            : "Reported by diskutil"
+                        }
                       />
                       <Fact
                         label="PARTITION SCHEME"
@@ -1254,14 +1875,21 @@ export function App() {
                       <Fact
                         label="LOGICAL BLOCK SIZE"
                         value={displayValue(
-                          getField(device.info, "DeviceBlockSize") ?? getField(device.info, "log-sec"),
+                          getField(device.info, "DeviceBlockSize") ??
+                            getField(device.info, "log-sec"),
                         )}
                         detail="Original value · bytes"
                       />
                       <Fact
-                        label={snapshot?.platform === "Linux" ? "OS READ ONLY" : "OS MEDIA WRITABLE"}
+                        label={
+                          snapshot?.platform === "Linux"
+                            ? "OS READ ONLY"
+                            : "OS MEDIA WRITABLE"
+                        }
                         value={displayValue(
-                          snapshot?.platform === "Linux" ? getField(device.info, "ro") : getField(device.info, "WritableMedia"),
+                          snapshot?.platform === "Linux"
+                            ? getField(device.info, "ro")
+                            : getField(device.info, "WritableMedia"),
                         )}
                         detail="Independent of DRC command policy"
                       />
@@ -1293,9 +1921,12 @@ export function App() {
                     </div>
                   </>
                 )}
-                {tab === "partitions" && <Partitions device={device} />}
+                {tab === "partitions" && (
+                  <Partitions device={device} simple={experience === "easy"} />
+                )}
                 {tab === "smart" && (
                   <SmartView
+                    simple={experience === "easy"}
                     device={device}
                     result={smart[device.identityKey]}
                     busy={!!busy || archived}
@@ -1304,7 +1935,11 @@ export function App() {
                 )}
                 {tab === "connection" && (
                   <ConnectionView
-                    platform={snapshot?.platform ?? (tools.some(t=>t.key === "lsblk") ? "Linux" : "macOS")}
+                    simple={experience === "easy"}
+                    platform={
+                      snapshot?.platform ??
+                      (tools.some((t) => t.key === "lsblk") ? "Linux" : "macOS")
+                    }
                     result={connection}
                     busy={!!busy || archived}
                     run={() => void runConnection()}
@@ -1312,17 +1947,19 @@ export function App() {
                 )}
                 {tab === "tools" && (
                   <ToolsView
+                    simple={experience === "easy"}
                     tools={tools}
                     busy={!!busy || archived}
                     refresh={() => void refresh()}
                     smart={() => setTab("smart")}
                     connection={() => setTab("connection")}
-                    acquisition={() => setAcquisitionOpen(true)}
-                    images={() => setImageOpen(true)}
+                    acquisition={() => openPanel("acquisition")}
+                    images={() => openPanel("image")}
                   />
                 )}
                 {tab === "activity" && (
                   <CommandTiming
+                    simple={experience === "easy"}
                     records={records}
                     onSelect={(id) => {
                       setSelectedRecord(id);
@@ -1337,14 +1974,10 @@ export function App() {
             <div className="unselected-workspace">
               <div className="workspace-intro">
                 <span className="eyebrow">STORAGE / INSPECTION</span>
-                <h1>
-                  One workspace.
-                  <br />
-                  Every reported field.
-                </h1>
+                <h1>Select a device</h1>
                 <p>
-                  Inspect connected media, partition layouts and original tool
-                  output. You choose the query and interpret the readings.
+                  Choose a source from the sidebar to inspect its metadata,
+                  partitions and original tool output.
                 </p>
               </div>
               <div className="empty-media-panel">
@@ -1374,7 +2007,7 @@ export function App() {
                   </button>
                 )}
               </div>
-              <div className="empty-capabilities">
+              <div className="empty-capabilities" hidden>
                 <span>
                   <Icon name="shield" />
                   Source read only
@@ -1402,6 +2035,7 @@ export function App() {
         setMode={setTerminalMode}
         onCopy={(text) => void copy(text)}
         compact={terminalCompact}
+        onExpand={() => setTerminalCompact(false)}
         onToggle={() => setTerminalCompact((value) => !value)}
       />
       <footer className="app-status" data-busy={!!busy}>
@@ -1473,10 +2107,10 @@ export function App() {
                 <strong>System-wide write protection: not established</strong>
                 <p>
                   Physical acquisition refuses mounted sources. macOS holds a
-                  Disk Arbitration mount veto; Linux holds an exclusive read-only
-                  block-device handle during the operation. DRC does not block all writes from other
-                  applications. Existing mounts are unchanged; hardware
-                  write-blocker state is not verified.
+                  Disk Arbitration mount veto; Linux holds an exclusive
+                  read-only block-device handle during the operation. DRC does
+                  not block all writes from other applications. Existing mounts
+                  are unchanged; hardware write-blocker state is not verified.
                 </p>
               </div>
             </div>
@@ -1501,8 +2135,44 @@ export function App() {
           </section>
         </div>
       )}
+      {workspaceOpen && (
+        <WorkspacePanel
+          title="Storage workspace"
+          subtitle={
+            archived
+              ? "Recorded session snapshot"
+              : "Connected disks and host observations"
+          }
+          close={closeWorkspace}
+          wide
+          className="readings-modal"
+        >
+          <StorageOverview
+            simple={experience === "easy"}
+            snapshot={snapshot}
+            disabled={!!busy || !native || archived}
+            refresh={() => void refresh()}
+            openDevice={(id) => {
+              setObservationSelection(null);
+              setSelection(id);
+              selectionRef.current = id;
+              openPanel("device");
+              setTab("device");
+            }}
+            openObservation={(id) => {
+              setSelection(null);
+              selectionRef.current = null;
+              setObservationSelection(id);
+              openPanel(null);
+            }}
+            images={() => openPanel("image")}
+            acquire={() => openPanel("acquisition")}
+          />
+        </WorkspacePanel>
+      )}
       {sessionOpen && (
         <SessionPanel
+          simple={experience === "easy"}
           current={sessionId}
           originalImport={originalImport}
           archived={archived}
@@ -1515,22 +2185,111 @@ export function App() {
       )}
       {acquisitionOpen && (
         <AcquisitionPanel
-          device={recoverySource??device}
+          device={recoverySource ?? device}
           preferPhysical={!!recoverySource}
           simple={experience === "easy"}
-          platform={snapshot?.platform ?? (tools.some(t=>t.key === "lsblk") ? "Linux" : "macOS")}
+          platform={
+            snapshot?.platform ??
+            (tools.some((t) => t.key === "lsblk") ? "Linux" : "macOS")
+          }
           jobs={jobs}
           busy={!!busy && !acquiringRef.current}
           close={closeAcquisition}
           started={updateJob}
         />
       )}
-      {recoveryOpen&&<RecoveryPanel run={recoveryRun} running={recoveryRunning} stopping={recoveryStopping} historical={archived} initialKey={observedSelection?`observation:${observedSelection.id}`:device?.internal===false?`device:${device.token}`:null} platform={snapshot?.platform??"macOS"} close={closeRecovery} start={startRecovery} stop={()=>{setRecoveryStopping("Cancellation requested. Waiting for the current command to exit; no later check will start.");void bridge.stopRecoveryChecks();}} continueToImage={continueRecovery} showCommand={id=>{setSelectedRecord(id);setTerminalMode("commands");setTerminalCompact(false);setRecoveryOpen(false);}}/>}
-      {evidenceOpen && <HostEvidence kernelAllowed={!archived} collectReport={collectHostEvidence} reports={hostEvidence} disabled={!!busy || archived} close={closeEvidence} onReport={report=>setHostEvidence(items=>[...items,report as unknown as Json])}/>}
-      {referenceOpen && <CheatSheet platform={snapshot?.platform ?? (tools.some(t=>t.key === "lsblk") ? "Linux" : "macOS")} close={closeReference} copy={text=>navigator.clipboard.writeText(text)} />}
-      {easyReading && <Modal title={easyReading === "smart" ? "Reported SMART / NVMe readings" : "Port map"} subtitle="EXPLICIT QUERY / ORIGINAL FIELDS" close={closeEasyReading} wide className="readings-modal">{easyReading === "smart" && device ? <SmartView device={device} result={smart[device.identityKey]} busy={!!busy || archived} run={(deviceType) => void runSmart(deviceType)} /> : <ConnectionView platform={snapshot?.platform ?? (tools.some(t=>t.key === "lsblk") ? "Linux" : "macOS")} result={connection} busy={!!busy || archived} run={() => void runConnection()} />}</Modal>}
+      {recoveryOpen && (
+        <RecoveryPanel
+          run={recoveryRun}
+          running={recoveryRunning}
+          stopping={recoveryStopping}
+          historical={archived}
+          initialKey={
+            observedSelection
+              ? `observation:${observedSelection.id}`
+              : device?.internal === false
+                ? `device:${device.token}`
+                : null
+          }
+          platform={snapshot?.platform ?? "macOS"}
+          close={closeRecovery}
+          start={startRecovery}
+          stop={() => {
+            setRecoveryStopping(
+              "Cancellation requested. Waiting for the current command to exit; no later check will start.",
+            );
+            void bridge.stopRecoveryChecks();
+          }}
+          continueToImage={continueRecovery}
+          showCommand={(id) => {
+            setSelectedRecord(id);
+            setTerminalMode("commands");
+            setTerminalCompact(false);
+          }}
+        />
+      )}
+      {evidenceOpen && (
+        <HostEvidence
+          kernelAllowed={!archived}
+          collectReport={collectHostEvidence}
+          reports={hostEvidence}
+          disabled={!!busy || archived}
+          close={closeEvidence}
+          onReport={(report) =>
+            setHostEvidence((items) => [...items, report as unknown as Json])
+          }
+        />
+      )}
+      {referenceOpen && (
+        <CheatSheet
+          simple={experience === "easy"}
+          platform={
+            snapshot?.platform ??
+            (tools.some((t) => t.key === "lsblk") ? "Linux" : "macOS")
+          }
+          close={closeReference}
+          copy={(text) => navigator.clipboard.writeText(text)}
+        />
+      )}
+      {easyReading && (
+        <WorkspacePanel
+          title={
+            easyReading === "smart"
+              ? "Reported SMART / NVMe readings"
+              : experience === "easy"
+                ? "Connections"
+                : "Port map"
+          }
+          subtitle="Original device and host observations."
+          close={closeEasyReading}
+          wide
+          className="readings-modal"
+        >
+          {easyReading === "smart" && device ? (
+            <SmartView
+              simple={experience === "easy"}
+              device={device}
+              result={smart[device.identityKey]}
+              busy={!!busy || archived}
+              run={(deviceType) => void runSmart(deviceType)}
+            />
+          ) : (
+            <ConnectionView
+              simple={experience === "easy"}
+              platform={
+                snapshot?.platform ??
+                (tools.some((t) => t.key === "lsblk") ? "Linux" : "macOS")
+              }
+              result={connection}
+              busy={!!busy || archived}
+              run={() => void runConnection()}
+            />
+          )}
+        </WorkspacePanel>
+      )}
       {imageOpen && (
         <ImagePanel
+          simple={experience === "easy"}
           reports={imageReports}
           disabled={!!busy}
           close={closeImages}

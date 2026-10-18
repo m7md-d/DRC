@@ -280,13 +280,13 @@ struct PortNode: Decodable, Identifiable {
       "super_speed": "Up to 5 Gb/s", "super_speed_plus": "Up to 10 Gb/s",
       "super_speed_plus_by_2": "Up to 20 Gb/s",
     ]
-    let definitions: [(String, [String], String)] = [
+    var definitions: [(String, [String], String)] = [
       (
-        "Link / speed", ["device_speed", "speed", "current_speed_key", "current_link_speed"],
+        "Link / speed", ["DataRateDescription", "device_speed", "speed", "Device Speed", "USBSpeed", "current_speed_key", "current_link_speed"],
         "Reported link or descriptor; not measured disk throughput."
       ),
       (
-        "Power requested", ["bus_power_used", "bMaxPower", "USB Power Requested"],
+        "Power requested", ["bus_power_used", "kUSBBusCurrentAllocation", "bMaxPower", "USB Power Requested"],
         "Declared USB power request; not measured current into the SSD."
       ),
       (
@@ -299,11 +299,21 @@ struct PortNode: Decodable, Identifiable {
       (
         "Port / power state",
         [
-          "IOPowerManagement.CurrentPowerState", "receptacle_status_key", "IOServiceState",
+          "Active", "port-status", "IOPowerManagement.CurrentPowerState", "receptacle_status_key", "IOServiceState",
           "authorized",
         ], "Original reported state; does not diagnose the disk inside an enclosure."
       ),
     ]
+    if kind.lowercased().contains("network") {
+      definitions = [("Link status", ["linkStatus", "operstate"], "Passive interface status; administrative flags alone do not establish a connected cable."),
+        ("Media / speed", ["media", "speed"], "Reported interface media, not measured throughput."),
+        ("Carrier", ["carrier"], "Original sysfs carrier value.")]
+    } else if kind.lowercased().contains("display") {
+      definitions = [("Activity", ["Active", "spdisplays_online", "status"], "Host-reported display transport state."),
+        ("Link / resolution", ["LinkRateDescription", "_spdisplays_resolution", "spdisplays_pixelresolution"], "Reported display link or resolution."),
+        ("Hot-plug state", ["HPD_StateDescription"], "Original hot-plug state; unknown is retained."),
+        ("Lanes", ["LaneCount"], "Host-reported current display lane count.")]
+    }
     return definitions.compactMap { label, keys, hint in
       for key in keys {
         let field =
@@ -313,9 +323,11 @@ struct PortNode: Decodable, Identifiable {
         let value: String
         if key == "device_speed" {
           value = speedNames[text] ?? text
+        } else if key == "Device Speed", let index = Int(text), (0...5).contains(index) {
+          value = ["1.5 Mb/s", "12 Mb/s", "480 Mb/s", "5 Gb/s", "10 Gb/s", "20 Gb/s"][index]
         } else if [
           "bus_power", "bus_power_used", "bus_power_available", "kUSBWakePortCurrentLimit",
-          "kUSBSleepPortCurrentLimit",
+          "kUSBSleepPortCurrentLimit", "kUSBBusCurrentAllocation",
         ].contains(key), UInt64(text) != nil {
           value = text + " mA"
         } else {

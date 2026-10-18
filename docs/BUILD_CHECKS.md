@@ -59,3 +59,40 @@
 - Physical-source admission requires a positively external medium on macOS. Linux separately resolves non-system hardware backing, including secondary internal SATA/NVMe, excludes system/swap and mounted sources, and holds a read-only exclusive descriptor.
 
 No acquisition, sector scan, SMART self-test, filesystem traversal or destination write was performed on the owner's personal flash. The unavailable faulty Samsung SSD was not tested. Controlled userspace faults and loop-device tests do not validate electrical instability, damaged controllers/NAND, real reconnects or uninterruptible kernel reads. See [SSD resilience](SSD-RESILIENCE.md) for evidence and remaining boundaries.
+
+
+## Fedora packaging and reference families — 17 October 2026
+
+- Debian / Ubuntu / Linux Mint share one `Debian family` reference profile. Existing saved Ubuntu/Mint choices migrate to it. Fedora has its own DNF package names and local RPM installation example; inspection and recovery commands remain shared.
+- macOS production build and native command-reference switching were verified. The app version remains 0.5.0.
+- Fedora 43 aarch64: 26 frontend checks, 67 Rust checks, Clippy with warnings denied, and all 12 generated-file ddrescue fault/resume cases passed. The named fault cases include short/interrupted reads, early EOF, disappearing devices, EIO, source delays, destination/mapfile failures and 4 KiB alignment. Source hashes and exact resumed output are recorded in the accompanying JSON.
+- `DRC-0.5.0-1.aarch64.rpm` built locally and its checksum was verified. A fresh Fedora 43 image installed it through DNF without development headers. The main executable's dynamic dependencies resolved; bundled GNU ddrescue and the image reader ran, with private image-reader libraries loaded from `/usr/lib/drc`.
+- GitHub Actions now defines Debian and Fedora builds for amd64 and arm64, with separate clean-install and owned-loop kernel checks and family-scoped evidence. Those new remote jobs have not been run from this workspace. Local Fedora desktop UI, SELinux/polkit behavior in a real desktop session and physical-device acquisition remain separate validation work.
+- The fullscreen toolbar gap (UI-001) is fixed in the packaged macOS app. AppKit supplies the real fullscreen state and system control side; the toolbar reclaims/restores the inset with a 220 ms transition, disabled by Reduce Motion. Two live enter/exit cycles and ordinary zoom were checked on the Arabic macOS host, and the moved policy button remained clickable. The presentation suite now passes 40 checks, including both control sides and restoration directly into fullscreen. All 26 frontend tests, 27 native model checks, 8 continuity checks, the production app build and Clippy with the native macOS feature and warnings denied passed. The version remains 0.5.0.
+
+
+## Release scripts, screenshots and copy — 17 October 2026
+
+- All current version fields agree at 0.5.0. Eight release-script checks passed, including dependency-version preservation, stale screenshot rejection, unrelated staged-change refusal, annotated tagging/atomic push to an owned temporary Git remote, and failed-push recovery.
+- Native workspace capture ran successfully through the packaged app. Three 2360 × 1464 PNGs show device metadata, real directory reads from the generated FAT16 image, and Linux command examples. The generated source hash stayed unchanged. Captures check the initial native toolbar side, use a separate session store and preserve interface preferences; no physical acquisition, SMART query or source write is part of the driver.
+- Twenty-six frontend tests, 69 Rust tests, 27 native model checks, eight continuity checks and 40 native presentation checks passed. Production packaging/signature verification and native-feature Clippy with warnings denied passed. Version, README/hash and copy checks passed.
+- CI now gates package publication on version/README/copy checks, Linux builds and a macOS arm64 build. Release assets upload into a draft before publication. These changed GitHub jobs have not run remotely; no project commit, tag, push or release was made in this session.
+
+## Disk navigation and app assets — 17 October 2026
+
+- The packaged macOS app opens both output streams from their labels and counters. The capture driver verifies intermediate opening frames, switching streams, reopening from collapsed state and preservation of the same terminal instance. Storage and disk breadcrumbs open their views while Easy remains selected.
+- Panel focus no longer scrolls the window chrome. Capture checks require the full navigation row within the snapshot before replacing README images. The three regenerated frames were visually reviewed; the generated image hash is unchanged.
+- The SVG app icon generates desktop icon formats and the README asset together. The installed local bundle contains the matching ICNS. The README header was visually reviewed. All 26 frontend and eight release-script tests, production packaging/signature verification, copy, version and README/hash checks passed. The version remains 0.5.0.
+
+## Shared pages and hub interfaces — 18 October 2026
+
+- On the attached M1 hub, the main port map retains the selected Ethernet node while switching Easy → Professional → Easy. Entering a workspace focuses its region, without selecting the back action. A single-group System Profiler table renders directly, without a layout switch.
+- USB host, device and service snapshots of the same registry ID share one source option. Readings combine available properties; conflicting original values remain under the original readings. The attached hub's USB 2/3 branches and downstream ports, AX88179B / en5 link state, host DisplayPort transports and connected-display reports were inspected. Display transport and physical HDMI connector identity remain separate when the host does not publish the latter.
+- Thirty frontend tests, 73 Rust tests, 31 native model checks, eight continuity checks and 40 presentation checks pass. Clippy passes with warnings denied. Linux network and DRM connectors use read-only sysfs properties with canonical ancestry; synthetic tests cover unknown/down/disconnected states and similar-prefix rejection. Physical Linux desktop validation of these new fields remains pending.
+- The final macOS bundle includes the level disk enclosure, elliptical dial and vertically centered icon; its ICNS matches the generated asset. Three new README captures include the complete visible workspace and the actual native window controls. Each frame was visually reviewed, and the generated FAT16 source hash is unchanged. The README distinguishes source v0.5.0 from the live published-release badge and retains build status, platforms, downloads and technology details. No version bump, project commit, tag or push was made.
+
+## Task layouts and mode continuity — 18 October 2026
+
+- Easy now uses source → destination → review copy steps, a file browser with name/allocation filters and selection, connection cards with parent navigation, task-based command selection and saved-session cards. Disk layout, reported SMART status, command history and tool functions have task-oriented views; Professional retains full tables, identifiers, transport choices and parameters.
+- The native capture driver checks the disk toggle in both directions and all five non-overview device sections. It verifies that mode changes preserve the storage page, copy form and step, edited retry passes, pasted session input, opened generated image, selected file, filename filter and command-reference search. The same mounted form/browser instances are retained. The attached hub branch was also selected and retained across Easy → Professional → Easy manually.
+- Thirty frontend tests, the macOS production build and the native capture driver passed. Three complete native screenshots were visually reviewed; the generated FAT16 source hash is unchanged. No physical acquisition, sector scan, SMART query or connection reset was started for this UI validation. The app remains at 0.5.0.

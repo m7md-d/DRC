@@ -1,0 +1,31 @@
+{
+  "version": "0.5.0",
+  "source": "native-desktop",
+  "generatedImageUnchanged": true,
+  "images": [
+    {
+      "file": "overview.png",
+      "title": "Disk overview",
+      "description": "Device capacity, connection readings and inspection or imaging controls.",
+      "width": 1180,
+      "height": 780,
+      "sha256": "062f7b6b9d38e6116d726edaaeb6c1d1943527a13beb6a287a66ae6a3a0e5bbc"
+    },
+    {
+      "file": "image-files.png",
+      "title": "Image files",
+      "description": "Allocated and deleted entries read from a generated FAT16 image through the normal image reader.",
+      "width": 1180,
+      "height": 780,
+      "sha256": "c4067ce1fe469edea29d6f880f4bd871733a1876b5786c0951d5672f4f03c001"
+    },
+    {
+      "file": "command-reference.png",
+      "title": "Command reference",
+      "description": "Linux installation commands, tool flags and copyable examples.",
+      "width": 1180,
+      "height": 780,
+      "sha256": "81c589a92279b7647e968f9a2c6c5ef2c63fc80671aa89cdc81e9f87151b21c1"
+    }
+  ]
+}

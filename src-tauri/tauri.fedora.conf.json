@@ -1,0 +1,35 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "targets": [
+      "rpm"
+    ],
+    "externalBin": [
+      "binaries/drc-tsk",
+      "binaries/drc-ddrescue"
+    ],
+    "linux": {
+      "rpm": {
+        "depends": [
+          "webkit2gtk4.1",
+          "gtk3",
+          "openssl-libs",
+          "libxdo",
+          "systemd-udev",
+          "udisks2",
+          "usbutils",
+          "pciutils",
+          "smartmontools",
+          "sleuthkit"
+        ],
+        "files": {
+          "/usr/lib/drc/": "../.cache/linux-libs/",
+          "/usr/share/doc/drc/ddrescue-1.30.tar.lz": "../.cache/ddrescue-1.30.tar.lz",
+          "/usr/share/doc/drc/DDRESCUE-COPYING": "../.cache/ddrescue-1.30/COPYING",
+          "/usr/share/doc/drc/LINUX-INSTALL.md": "../docs/LINUX-INSTALL.md"
+        },
+        "release": "1"
+      }
+    }
+  }
+}

@@ -40,6 +40,7 @@ const stateBuild = spawnSync(
     resolve(cache, "modules"),
     "src-tauri/native/MenuModels.swift",
     "src-tauri/native/MenuBar.swift",
+    "src-tauri/native/WindowPresentation.swift",
     "src-tauri/native/tests/MenuStateTests.swift",
     "-o",
     stateBinary,
@@ -48,4 +49,24 @@ const stateBuild = spawnSync(
 );
 if (stateBuild.status !== 0) process.exit(stateBuild.status ?? 1);
 const stateTests = spawnSync(stateBinary, [], { stdio: "inherit" });
-process.exit(stateTests.status ?? 1);
+if (stateTests.status !== 0) process.exit(stateTests.status ?? 1);
+const presentationBinary = resolve(cache, "presentation-tests");
+const presentationBuild = spawnSync(
+  "xcrun",
+  [
+    "swiftc",
+    "-swift-version",
+    "5",
+    "-warnings-as-errors",
+    "-module-cache-path",
+    resolve(cache, "modules"),
+    "src-tauri/native/WindowPresentation.swift",
+    "src-tauri/native/tests/WindowPresentationTests.swift",
+    "-o",
+    presentationBinary,
+  ],
+  { stdio: "inherit" },
+);
+if (presentationBuild.status !== 0) process.exit(presentationBuild.status ?? 1);
+const presentationTests = spawnSync(presentationBinary, [], { stdio: "inherit" });
+process.exit(presentationTests.status ?? 1);

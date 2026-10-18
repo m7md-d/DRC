@@ -127,7 +127,7 @@ export function AcquisitionCharts({ job }: { job: AcquisitionJob }) {
           {progress && (
             <details className="measurement-source">
               <summary>
-                Every map observation · {progress.samples.length} samples
+                Map observations · {progress.samples.length} samples
               </summary>
               <FieldTable
                 title="Recorded map observations"
@@ -150,7 +150,7 @@ export function AcquisitionCharts({ job }: { job: AcquisitionJob }) {
           {report && (
             <details className="measurement-source">
               <summary>
-                Every sample and original rate log · {report.samples.length}{" "}
+                Samples and original rate log · {report.samples.length}{" "}
                 rows
               </summary>
               <code className="artifact-path">{report.path}</code>

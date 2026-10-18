@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { bridge, native } from "./bridge";
+import { ModeDetails } from "./ModeDetails";
 import { ExtractionPanel } from "./ExtractionPanel";
-import { Modal } from "./Modal";
+import { WorkspacePanel } from "./WorkspacePanel";
 import { Icon } from "./Icon";
 import { Select } from "./Select";
 import { FieldTable } from "./FieldTable";
@@ -94,7 +95,9 @@ export function ImagePanel({
   onReport,
   jobs,
   onJob,
+  simple = false,
 }: {
+  simple?: boolean;
   reports: Json[];
   jobs: ExtractionJob[];
   onJob: (job: ExtractionJob) => void;
@@ -108,12 +111,15 @@ export function ImagePanel({
   const opaqueReports = reports.filter((r) => !isImageReport(r));
   const [path, setPath] = useState("");
   const [source, setSource] = useState<ImageSource | null>(null);
+  const [sourceSetupOpen, setSourceSetupOpen] = useState(false);
   const [geometry, setGeometry] = useState(initial);
   const [entries, setEntries] = useState("all");
   const [report, setReport] = useState<ImageReport | null>(null);
   const [selected, setSelected] = useState<ImageFileEntry | null>(null);
   const [stack, setStack] = useState<{ inode: string; name: string }[]>([]);
   const [inode, setInode] = useState("");
+  const [fileQuery, setFileQuery] = useState("");
+  const [entryFilter, setEntryFilter] = useState("all");
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const dismiss = useCallback(() => {
@@ -167,17 +173,90 @@ export function ImagePanel({
   }
   const historical = report && report.source.token !== source?.token;
   const blocked = working || disabled;
+  const listedFiles = (report?.files ?? [])
+    .map((file, index) => ({ file, index }))
+    .filter(
+      ({ file }) =>
+        file.name.toLowerCase().includes(fileQuery.toLowerCase()) &&
+        (entryFilter === "all" ||
+          (entryFilter === "deleted" ? file.deleted : !file.deleted)),
+    );
+  const queryContext = report && (
+    <ModeDetails simple={simple} title="Source and query settings">
+      <code className="artifact-path">{report.source.path}</code>
+      <p className="source-label">
+        Sector size {report.request.geometry.sectorSize} bytes · filesystem
+        offset {report.request.geometry.offsetSectors} sectors · reader{" "}
+        {report.request.geometry.filesystem ?? "auto"} ·{" "}
+        {report.request.geometry.utc ? "UTC" : "host timezone"}
+      </p>
+      <p className="source-label">
+        The selected timezone controls reader formatting. FAT local timestamps
+        do not record the original timezone.
+      </p>
+    </ModeDetails>
+  );
   return (
-    <Modal
-      title="Image workspace"
-      subtitle="RAW IMAGE / PARTITIONS / FILESYSTEM / FILES"
+    <WorkspacePanel
+      title={simple ? "Browse disk image" : "Image workspace"}
+      subtitle="Inspect partitions and recover files from a read-only image."
       close={dismiss}
       wide
+      className={simple ? "simple-image" : ""}
     >
+      {simple && (
+        <ol className="workflow-steps" aria-label="Image recovery steps">
+          <li data-current={!source}>
+            1 <span>Open image</span>
+          </li>
+          <li data-current={!!source && report?.request.action !== "directory"}>
+            2 <span>Choose partition or browse files</span>
+          </li>
+          <li data-current={report?.request.action === "directory"}>
+            3 <span>Select files and save copies</span>
+          </li>
+        </ol>
+      )}
+      {simple && source && (
+        <div className="image-source-strip">
+          <Icon name="file" size={20} />
+          <div data-hint={source.path}>
+            <strong>{source.path.split("/").at(-1)}</strong>
+            <small>
+              <ByteValue value={source.identity.size} /> · Read-only image ·
+              offset {geometry.offsetSectors} sectors
+            </small>
+          </div>
+          <button
+            className="button"
+            disabled={blocked}
+            onClick={() => void action(() => read("partitions"))}
+          >
+            Read partitions
+          </button>
+          <button
+            className="button"
+            disabled={blocked}
+            onClick={() => void action(() => read("directory", null, []))}
+          >
+            Browse files
+          </button>
+          <button
+            className="button"
+            aria-expanded={sourceSetupOpen}
+            onClick={() => setSourceSetupOpen((value) => !value)}
+          >
+            Image settings
+          </button>
+        </div>
+      )}
       <div className="image-layout">
-        <section className="image-setup">
+        <section
+          className="image-setup"
+          hidden={simple && !!source && !sourceSetupOpen}
+        >
           <div className="section-heading">
-            <h3>Read-only image source</h3>
+            <h3>{simple ? "Image file" : "Read-only image source"}</h3>
             <span className="small-tag">NO MOUNT</span>
           </div>
           {error && (
@@ -185,50 +264,54 @@ export function ImagePanel({
               {error}
             </div>
           )}
-          <label className="form-field">
-            Source image
-            <div className="path-field">
-              <input
-                value={path}
-                disabled={blocked}
-                onChange={(e) => setPath(e.target.value)}
-                placeholder="Absolute path to one raw image file"
-              />
-              <button
-                className="button"
-                disabled={blocked}
-                onClick={() =>
-                  void action(async () => {
-                    const picked = await bridge.pick("sourceImage");
-                    if (picked) setPath(picked);
-                  })
-                }
-              >
-                Choose…
-              </button>
+          <div className="image-open-controls">
+            <div className="form-field">
+              <label htmlFor="image-source-path">Source image</label>
+              <div className="path-field">
+                <input
+                  id="image-source-path"
+                  value={path}
+                  disabled={blocked}
+                  onChange={(e) => setPath(e.target.value)}
+                  placeholder="Absolute path to one raw image file"
+                />
+                <button
+                  className="button"
+                  disabled={blocked}
+                  onClick={() =>
+                    void action(async () => {
+                      const picked = await bridge.pick("sourceImage");
+                      if (picked) setPath(picked);
+                    })
+                  }
+                >
+                  Choose…
+                </button>
+              </div>
             </div>
-          </label>
-          <button
-            className="button primary"
-            disabled={!native || blocked || !path}
-            onClick={() =>
-              void action(async () => {
-                const next = await bridge.openImage(path);
-                setSource(next);
-                setReport(null);
-                setSelected(null);
-                setStack([]);
-              })
-            }
-          >
-            <Icon name="file" />
-            Open image
-          </button>
+            <button
+              className="button primary"
+              disabled={!native || blocked || !path}
+              onClick={() =>
+                void action(async () => {
+                  const next = await bridge.openImage(path);
+                  setSource(next);
+                  setReport(null);
+                  setSelected(null);
+                  setStack([]);
+                  setSourceSetupOpen(false);
+                })
+              }
+            >
+              <Icon name="file" />
+              Open image
+            </button>
+          </div>
           {source && (
             <div className="review-fact">
               <code>{source.path}</code>
               <span>
-                <ByteValue value={source.identity.size}/>
+                <ByteValue value={source.identity.size} />
               </span>
               <span>
                 Opened {timestamp(source.openedAt)} · source handle read only
@@ -236,99 +319,107 @@ export function ImagePanel({
             </div>
           )}
           <p className="panel-description">
-            Tools read the raw image without mounting its filesystem. Opening
-            the source records its identity; choose a query below to read its
-            contents.
+            The image stays read-only and unmounted. Open it, then choose a
+            partition or directory query.
           </p>
-          <div className="form-grid">
+          <ModeDetails
+            simple={simple}
+            title={`Reader settings · ${geometry.sectorSize} B sectors · offset ${geometry.offsetSectors}`}
+            hint="Sector geometry, filesystem reader and directory options. Changing a value invalidates the current result."
+          >
+            <div className="form-grid">
+              <div className="form-field">
+                <span>Logical sector size · bytes</span>
+                <Select
+                  label="Image logical sector size"
+                  value={String(geometry.sectorSize)}
+                  disabled={blocked}
+                  options={[512, 1024, 2048, 4096].map((n) => ({
+                    value: String(n),
+                    label: String(n),
+                  }))}
+                  onChange={(value) =>
+                    changeGeometry({ ...geometry, sectorSize: Number(value) })
+                  }
+                />
+              </div>
+              <label className="form-field">
+                Image offset · sectors
+                <input
+                  inputMode="numeric"
+                  value={geometry.offsetSectors}
+                  disabled={blocked}
+                  onChange={(e) =>
+                    changeGeometry({
+                      ...geometry,
+                      offsetSectors: e.target.value,
+                    })
+                  }
+                />
+              </label>
+            </div>
             <div className="form-field">
-              <span>Logical sector size · bytes</span>
+              <span>Filesystem reader</span>
               <Select
-                label="Image logical sector size"
-                value={String(geometry.sectorSize)}
+                label="Image filesystem reader"
+                value={geometry.filesystem ?? "auto"}
                 disabled={blocked}
-                options={[512, 1024, 2048, 4096].map((n) => ({
-                  value: String(n),
-                  label: String(n),
-                }))}
+                options={[
+                  { value: "auto", label: "Auto · tool detection" },
+                  ...filesystems.map((f) => ({ value: f, label: f })),
+                ]}
                 onChange={(value) =>
-                  changeGeometry({ ...geometry, sectorSize: Number(value) })
+                  changeGeometry({
+                    ...geometry,
+                    filesystem: value === "auto" ? null : value,
+                  })
                 }
               />
             </div>
-            <label className="form-field">
-              Image offset · sectors
-              <input
-                inputMode="numeric"
-                value={geometry.offsetSectors}
-                disabled={blocked}
-                onChange={(e) =>
-                  changeGeometry({ ...geometry, offsetSectors: e.target.value })
-                }
-              />
-            </label>
-          </div>
-          <div className="form-field">
-            <span>Filesystem reader</span>
-            <Select
-              label="Image filesystem reader"
-              value={geometry.filesystem ?? "auto"}
-              disabled={blocked}
-              options={[
-                { value: "auto", label: "Auto · tool detection" },
-                ...filesystems.map((f) => ({ value: f, label: f })),
-              ]}
-              onChange={(value) =>
-                changeGeometry({
-                  ...geometry,
-                  filesystem: value === "auto" ? null : value,
-                })
-              }
-            />
-          </div>
-          <div className="form-grid">
-            <div className="form-field">
-              <span>Timestamp interpretation</span>
-              <Select
-                label="Image timestamp interpretation"
-                value={geometry.utc ? "utc" : "host"}
-                disabled={blocked}
-                options={[
-                  { value: "utc", label: "UTC" },
-                  { value: "host", label: "Host timezone" },
-                ]}
-                onChange={(v) =>
-                  changeGeometry({ ...geometry, utc: v === "utc" })
-                }
-              />
+            <div className="form-grid">
+              <div className="form-field">
+                <span>Timestamp interpretation</span>
+                <Select
+                  label="Image timestamp interpretation"
+                  value={geometry.utc ? "utc" : "host"}
+                  disabled={blocked}
+                  options={[
+                    { value: "utc", label: "UTC" },
+                    { value: "host", label: "Host timezone" },
+                  ]}
+                  onChange={(v) =>
+                    changeGeometry({ ...geometry, utc: v === "utc" })
+                  }
+                />
+              </div>
+              <div className="form-field">
+                <span>Directory entries</span>
+                <Select
+                  label="Directory entries to list"
+                  value={entries}
+                  disabled={blocked}
+                  options={[
+                    { value: "all", label: "Allocated + deleted" },
+                    { value: "allocated", label: "Allocated only" },
+                    { value: "deleted", label: "Deleted only" },
+                  ]}
+                  onChange={(value) => {
+                    setEntries(value);
+                    setReport(null);
+                    setSelected(null);
+                  }}
+                />
+              </div>
             </div>
-            <div className="form-field">
-              <span>Directory entries</span>
-              <Select
-                label="Directory entries to list"
-                value={entries}
-                disabled={blocked}
-                options={[
-                  { value: "all", label: "Allocated + deleted" },
-                  { value: "allocated", label: "Allocated only" },
-                  { value: "deleted", label: "Deleted only" },
-                ]}
-                onChange={(value) => {
-                  setEntries(value);
-                  setReport(null);
-                  setSelected(null);
-                }}
-              />
-            </div>
-          </div>
-          <div className="panel-actions">
+          </ModeDetails>
+          <div className="panel-actions image-query-actions">
             <button
               className="button"
               disabled={!source || blocked}
               onClick={() => void action(() => read("partitions"))}
             >
               <Icon name="partitions" />
-              Partition table
+              {simple ? "Read partitions" : "Partition table"}
             </button>
             <button
               className="button"
@@ -342,29 +433,30 @@ export function ImagePanel({
               disabled={!source || blocked}
               onClick={() => void action(() => read("directory", null, []))}
             >
-              Browse root
+              {simple ? "Browse files" : "Browse root"}
             </button>
           </div>
-          <label className="form-field">
-            Metadata address · optional NTFS type / stream ID
-            <input
-              value={inode}
-              disabled={blocked}
-              onChange={(e) => setInode(e.target.value)}
-              placeholder="e.g. 42 or 42-128-1"
-            />
-          </label>
-          <button
-            className="button"
-            disabled={!source || blocked || !inode}
-            onClick={() => void action(() => read("metadata", inode))}
-          >
-            Inspect metadata address
-          </button>
+          <ModeDetails simple={simple} title="Inspect a metadata address">
+            <label className="form-field">
+              Metadata address · optional NTFS type / stream ID
+              <input
+                value={inode}
+                disabled={blocked}
+                onChange={(e) => setInode(e.target.value)}
+                placeholder="e.g. 42 or 42-128-1"
+              />
+            </label>
+            <button
+              className="button"
+              disabled={!source || blocked || !inode}
+              onClick={() => void action(() => read("metadata", inode))}
+            >
+              Inspect metadata address
+            </button>
+          </ModeDetails>
           <p className="source-label">
-            A sector offset is explicit input to the reader. The adapter uses
-            The Sleuth Kit's read APIs; DRC does not infer a diagnosis or select
-            a recovery action.
+            Set the image offset in Reader settings when opening a partition
+            inside a full-disk image.
           </p>
           <details className="measurement-source">
             <summary>Saved image queries · {reports.length}</summary>
@@ -391,7 +483,7 @@ export function ImagePanel({
                     Unrecognized imported image report · {i + 1}
                   </summary>
                   <FieldTable
-                    title="Every imported field"
+                    title="Imported fields"
                     source="Original imported report · no reader actions are attached"
                     value={r}
                   />
@@ -410,17 +502,19 @@ export function ImagePanel({
               aria-pressed={view === "query"}
               onClick={() => setView("query")}
             >
-              Query results
+              {simple ? "Files and partitions" : "Query results"}
             </button>
             <button
               aria-pressed={view === "extractions"}
               onClick={() => setView("extractions")}
             >
-              File extractions <span>{jobs.length}</span>
+              {simple ? "Save selected files" : "File extractions"}{" "}
+              <span>{jobs.length}</span>
             </button>
           </div>
           {view === "extractions" ? (
             <ExtractionPanel
+              simple={simple}
               reportId={
                 report && !historical && report.request.action === "directory"
                   ? report.id
@@ -435,11 +529,49 @@ export function ImagePanel({
           ) : !report ? (
             <div className="empty-state">
               <Icon name="file" size={30} />
-              <h3>Choose an image query</h3>
+              <h3>
+                {simple
+                  ? source
+                    ? "Choose what to read"
+                    : "Open a disk image to browse its files"
+                  : "Choose an image query"}
+              </h3>
               <p>
                 Reported partition fields, file entries and original tool output
                 appear here.
               </p>
+              {simple && source && (
+                <div className="image-start-actions">
+                  <button
+                    className="connection-card"
+                    disabled={blocked}
+                    onClick={() => void action(() => read("partitions"))}
+                  >
+                    <Icon name="partitions" />
+                    <span>
+                      <strong>Find partitions</strong>
+                      <small>
+                        Read the partition table of a full-disk image
+                      </small>
+                    </span>
+                    <Icon name="chevron" size={12} />
+                  </button>
+                  <button
+                    className="connection-card"
+                    disabled={blocked}
+                    onClick={() =>
+                      void action(() => read("directory", null, []))
+                    }
+                  >
+                    <Icon name="folder" />
+                    <span>
+                      <strong>Browse files</strong>
+                      <small>Read the filesystem at the selected offset</small>
+                    </span>
+                    <Icon name="chevron" size={12} />
+                  </button>
+                </div>
+              )}
             </div>
           ) : (
             <>
@@ -458,17 +590,7 @@ export function ImagePanel({
                   Exit {report.record.exitCode ?? "not available"}
                 </span>
               </div>
-              <code className="artifact-path">{report.source.path}</code>
-              <p className="source-label">
-                Sector size {report.request.geometry.sectorSize} bytes ·
-                filesystem offset {report.request.geometry.offsetSectors}{" "}
-                sectors · reader {report.request.geometry.filesystem ?? "auto"}{" "}
-                · {report.request.geometry.utc ? "UTC" : "host timezone"}
-              </p>
-              <p className="source-label">
-                The selected timezone controls reader formatting. FAT local
-                timestamps do not record the original timezone.
-              </p>
+              {!simple && queryContext}
               {historical && (
                 <div className="inline-note">
                   <Icon name="clock" />
@@ -491,15 +613,22 @@ export function ImagePanel({
               {report.record.launchError && (
                 <div className="error-box">{report.record.launchError}</div>
               )}
+              {report.record.exitCode !== null &&
+                report.record.exitCode !== 0 && (
+                  <div className="error-box" role="alert">
+                    Query exited with code {report.record.exitCode}.
+                    {report.record.stderr && <pre>{report.record.stderr}</pre>}
+                  </div>
+                )}
               {report.request.action === "partitions" && (
                 <>
                   <div className="table-scroll">
                     <table className="image-table">
                       <thead>
                         <tr>
-                          <th>ROW / SLOT</th>
-                          <th>START · SECTORS</th>
-                          <th>LENGTH · SECTORS</th>
+                          <th hidden={simple}>ROW / SLOT</th>
+                          <th hidden={simple}>START · SECTORS</th>
+                          <th>{simple ? "Size" : "LENGTH · SECTORS"}</th>
                           <th>DESCRIPTION</th>
                           <th />
                         </tr>
@@ -507,11 +636,28 @@ export function ImagePanel({
                       <tbody>
                         {report.partitions.map((p) => (
                           <tr key={p.row}>
-                            <td>
+                            <td hidden={simple}>
                               {p.row} / {p.slot}
                             </td>
-                            <td>{p.start}</td>
-                            <td>{p.length}</td>
+                            <td hidden={simple}>{p.start}</td>
+                            <td>
+                              {simple &&
+                              report.fields &&
+                              typeof report.fields === "object" &&
+                              !Array.isArray(report.fields) &&
+                              typeof report.fields.blockSize === "string" &&
+                              /^\d+$/.test(report.fields.blockSize) &&
+                              /^\d+$/.test(p.length) ? (
+                                <ByteValue
+                                  value={(
+                                    BigInt(p.length) *
+                                    BigInt(report.fields.blockSize)
+                                  ).toString()}
+                                />
+                              ) : (
+                                p.length
+                              )}
+                            </td>
                             <td>{p.description}</td>
                             <td>
                               <button
@@ -555,7 +701,7 @@ export function ImagePanel({
                                   });
                                 }}
                               >
-                                Use offset
+                                {simple ? "Select partition" : "Use offset"}
                               </button>
                             </td>
                           </tr>
@@ -564,11 +710,16 @@ export function ImagePanel({
                     </table>
                   </div>
                   {report.fields && (
-                    <FieldTable
-                      title="Every volume-system field"
-                      source="The Sleuth Kit volume API · exact source fields, including flags and table metadata"
-                      value={report.fields}
-                    />
+                    <ModeDetails
+                      simple={simple}
+                      title="Original partition fields"
+                    >
+                      <FieldTable
+                        title="Volume-system fields"
+                        source="The Sleuth Kit volume API · exact source fields, including flags and table metadata"
+                        value={report.fields}
+                      />
+                    </ModeDetails>
                   )}
                 </>
               )}
@@ -603,19 +754,39 @@ export function ImagePanel({
                     ))}
                   </div>
                   <p className="source-label">
-                    {report.files.length} represented entries ·{" "}
-                    {report.unparsedLines.length} other source lines · filter:{" "}
-                    {report.request.entries}. Original type codes and deleted
-                    markers belong to the reader.
+                    {listedFiles.length} of {report.files.length} listed entries
+                    · {report.unparsedLines.length} unparsed source lines ·
+                    query: {report.request.entries}
                   </p>
+                  <div className="file-browser-toolbar">
+                    <label className="search">
+                      <Icon name="search" />
+                      <input
+                        aria-label="Find a listed file"
+                        placeholder="Find a listed file…"
+                        value={fileQuery}
+                        onChange={(e) => setFileQuery(e.target.value)}
+                      />
+                    </label>
+                    <Select
+                      label="Filter listed files"
+                      value={entryFilter}
+                      onChange={setEntryFilter}
+                      options={[
+                        { value: "all", label: "All listed entries" },
+                        { value: "deleted", label: "Deleted entries" },
+                        { value: "allocated", label: "Allocated entries" },
+                      ]}
+                    />
+                  </div>
                   <div className="panel-actions">
                     <button
                       className="button subtle"
                       disabled={blocked || !!historical}
                       onClick={() =>
                         setChecked(
-                          report.files
-                            .map((file, index) =>
+                          listedFiles
+                            .map(({ file, index }) =>
                               ["d", "V"].includes(file.kind[0]) ? -1 : index,
                             )
                             .filter((i) => i >= 0)
@@ -623,7 +794,7 @@ export function ImagePanel({
                         )
                       }
                     >
-                      Select file entries
+                      Select listed files
                     </button>
                     <button
                       className="button subtle"
@@ -637,7 +808,8 @@ export function ImagePanel({
                       disabled={blocked || !!historical || !checked.length}
                       onClick={() => setView("extractions")}
                     >
-                      Extract selected · {checked.length}
+                      {simple ? "Save selected files" : "Extract selected"} ·{" "}
+                      {checked.length}
                     </button>
                   </div>
                   <div className="table-scroll">
@@ -648,15 +820,15 @@ export function ImagePanel({
                             <span className="sr-only">Select entry</span>
                           </th>
                           <th>NAME</th>
-                          <th>ADDRESS</th>
-                          <th>TYPE</th>
-                          <th>DELETED</th>
+                          <th hidden={simple}>ADDRESS</th>
+                          <th hidden={simple}>TYPE</th>
+                          <th>{simple ? "Status" : "DELETED"}</th>
                           <th>SIZE</th>
                           <th />
                         </tr>
                       </thead>
                       <tbody>
-                        {report.files.map((file, i) => (
+                        {listedFiles.map(({ file, index: i }) => (
                           <tr key={i} data-selected={selected === file}>
                             <td>
                               {!["d", "V"].includes(file.kind[0]) && (
@@ -686,17 +858,49 @@ export function ImagePanel({
                             <td>
                               <button
                                 className="file-name"
-                                onClick={() => setSelected(file)}
+                                onClick={() => {
+                                  if (
+                                    simple &&
+                                    ["d", "V"].includes(file.kind[0]) &&
+                                    !blocked &&
+                                    !historical
+                                  )
+                                    void action(() =>
+                                      read("directory", file.inode, [
+                                        ...stack,
+                                        { inode: file.inode, name: file.name },
+                                      ]),
+                                    );
+                                  else setSelected(file);
+                                }}
                               >
+                                {simple && (
+                                  <Icon
+                                    name={
+                                      ["d", "V"].includes(file.kind[0])
+                                        ? "folder"
+                                        : "file"
+                                    }
+                                    size={16}
+                                  />
+                                )}
                                 {file.name || '""'}
                               </button>
                             </td>
-                            <td>{file.inode}</td>
-                            <td>{file.kind}</td>
-                            <td>{String(file.deleted)}</td>
-                            <td><ByteValue value={file.size}/></td>
+                            <td hidden={simple}>{file.inode}</td>
+                            <td hidden={simple}>{file.kind}</td>
                             <td>
-                              {["d", "V"].includes(file.kind[0]) && (
+                              {simple
+                                ? file.deleted
+                                  ? "Deleted"
+                                  : "Allocated"
+                                : String(file.deleted)}
+                            </td>
+                            <td>
+                              <ByteValue value={file.size} />
+                            </td>
+                            <td>
+                              {!simple && ["d", "V"].includes(file.kind[0]) && (
                                 <button
                                   className="button subtle"
                                   disabled={blocked || !!historical}
@@ -716,12 +920,14 @@ export function ImagePanel({
                                 className="button subtle"
                                 disabled={blocked || !!historical}
                                 onClick={() =>
-                                  void action(() =>
-                                    read("metadata", file.inode),
-                                  )
+                                  simple
+                                    ? setSelected(file)
+                                    : void action(() =>
+                                        read("metadata", file.inode),
+                                      )
                                 }
                               >
-                                Metadata
+                                {simple ? "Details" : "Metadata"}
                               </button>
                             </td>
                           </tr>
@@ -730,11 +936,57 @@ export function ImagePanel({
                     </table>
                   </div>
                   {selected && (
-                    <FieldTable
-                      title="Every selected entry field"
-                      source="Original fls values; timestamps and flags are retained without normalization"
-                      value={selected as unknown as Json}
-                    />
+                    <section className="selected-file-inspector">
+                      <div className="section-heading">
+                        <h3>{selected.name}</h3>
+                        <button
+                          className="text-button"
+                          onClick={() => setSelected(null)}
+                        >
+                          Close details
+                        </button>
+                      </div>
+                      <dl className="reading-summary">
+                        <div>
+                          <dt>Type</dt>
+                          <dd>
+                            {["d", "V"].includes(selected.kind[0])
+                              ? "Directory"
+                              : "File"}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Size</dt>
+                          <dd>
+                            <ByteValue value={selected.size} />
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>Allocation</dt>
+                          <dd>
+                            {selected.deleted
+                              ? "Deleted entry"
+                              : "Allocated entry"}
+                          </dd>
+                        </div>
+                      </dl>
+                      <ModeDetails simple={simple} title="Original file fields">
+                        <FieldTable
+                          title="Selected entry fields"
+                          source="Original fls values; timestamps and flags are retained without normalization"
+                          value={selected as unknown as Json}
+                        />
+                      </ModeDetails>
+                      <button
+                        className="button"
+                        disabled={blocked || !!historical}
+                        onClick={() =>
+                          void action(() => read("metadata", selected.inode))
+                        }
+                      >
+                        Read filesystem metadata
+                      </button>
+                    </section>
                   )}
                 </>
               )}
@@ -744,8 +996,10 @@ export function ImagePanel({
                     {report.record.stdout || "No stdout was returned."}
                   </pre>
                 )}
-              <details className="measurement-source">
-                <summary>Original command and full output</summary>
+              <ModeDetails
+                simple={simple}
+                title="Original command and full output"
+              >
                 <code className="artifact-path">
                   {commandLine(report.record)}
                 </code>
@@ -760,17 +1014,18 @@ export function ImagePanel({
                     </pre>
                   </>
                 )}
-              </details>
-              <details className="measurement-source">
-                <summary>Every saved report field</summary>
+              </ModeDetails>
+              <ModeDetails simple={simple} title="Saved report fields">
                 <FieldTable
                   title="Complete image report"
                   source="All fields, including any imported additions"
                   value={report as unknown as Json}
                 />
-              </details>
-              <details className="measurement-source">
-                <summary>Source identity and exact query inputs</summary>
+              </ModeDetails>
+              <ModeDetails
+                simple={simple}
+                title="Source identity and exact query inputs"
+              >
                 <FieldTable
                   title="Image source and query"
                   source="Recorded source descriptor and explicit parameters"
@@ -781,11 +1036,12 @@ export function ImagePanel({
                     } as unknown as Json
                   }
                 />
-              </details>
+              </ModeDetails>
+              {simple && queryContext}
             </>
           )}
         </section>
       </div>
-    </Modal>
+    </WorkspacePanel>
   );
 }

@@ -1,0 +1,42 @@
+# Build on the oldest Fedora release covered by this package target.
+FROM node:22-bookworm-slim AS node
+FROM rust:slim-bookworm AS rust
+FROM fedora:43 AS build
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+COPY --from=node /usr/local/lib/node_modules /usr/local/lib/node_modules
+COPY --from=rust /usr/local/cargo /usr/local/cargo
+COPY --from=rust /usr/local/rustup /usr/local/rustup
+ENV PATH="/usr/local/cargo/bin:${PATH}" RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo CARGO_BUILD_JOBS=2
+RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
+RUN dnf install -y gcc gcc-c++ make pkgconf-pkg-config webkit2gtk4.1-devel gtk3-devel openssl-devel librsvg2-devel libappindicator-gtk3-devel libxdo-devel patchelf sleuthkit-devel sleuthkit ddrescue smartmontools usbutils pciutils systemd-udev udisks2 lzip curl ca-certificates python3 file rpm-build cpio && dnf clean all
+RUN rustup component add clippy rustfmt
+FROM build AS source
+WORKDIR /work
+COPY . .
+RUN npm ci
+RUN --mount=type=cache,id=drc-fedora-cargo,target=/usr/local/cargo/registry --mount=type=cache,id=drc-fedora-target,target=/work/src-tauri/target,sharing=locked \
+    npm test && \
+    npm run rust:test && \
+    npm run rust:check && \
+    python3 scripts/linux/test-faults.py && \
+    npm run desktop:build:fedora && \
+    package_version=$(node -p 'require("./package.json").version') && \
+    package_release=$(node -p 'require("./src-tauri/tauri.fedora.conf.json").bundle.linux.rpm.release') && \
+    package_arch=$(rpm --eval '%{_arch}') && \
+    mkdir /deliverables && \
+    cp "src-tauri/target/release/bundle/rpm/DRC-${package_version}-${package_release}.${package_arch}.rpm" /deliverables/ && \
+    cp scripts/linux/install-fedora.sh docs/LINUX-INSTALL.md .cache/linux-fault-results.json /deliverables/ && \
+    cd /deliverables && sha256sum *.rpm > SHA256SUMS
+FROM scratch AS artifacts
+COPY --from=source /deliverables/ /
+
+# A clean runtime must resolve dependencies and run both packaged adapters.
+FROM fedora:43 AS install-check
+COPY --from=source /deliverables/*.rpm /tmp/packages/
+RUN dnf install -y /tmp/packages/*.rpm && dnf clean all
+RUN ldd /usr/bin/drc > /tmp/drc-libraries && ! grep -q 'not found' /tmp/drc-libraries && /usr/bin/drc-ddrescue --version && /usr/bin/drc-tsk --version && ldd /usr/bin/drc-tsk | grep '/usr/bin/../lib/drc/' && rpm -q drc
+
+FROM fedora:43 AS kernel-tests
+RUN dnf install -y python3 util-linux e2fsprogs && dnf clean all
+COPY scripts/linux/test-kernel-claim.py /test-kernel-claim.py
+CMD ["python3", "/test-kernel-claim.py"]

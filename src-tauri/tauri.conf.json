@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "DRC",
-  "version": "0.4.8",
+  "version": "0.5.0",
   "identifier": "dev.m7md-d.drc",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -13,12 +13,14 @@
     "windows": [
       {
         "label": "main",
-        "title": "DRC — Disk Recovery Control",
-        "width": 1460,
-        "height": 980,
+        "title": "DRC — Disk Resource Console",
+        "width": 1180,
+        "height": 780,
         "minWidth": 640,
         "minHeight": 540,
-        "backgroundColor": "#090B0D"
+        "backgroundColor": "#090B0D",
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
       }
     ],
     "security": {

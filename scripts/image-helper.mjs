@@ -15,7 +15,7 @@ export async function buildImageHelper() {
   if (linux) await new Promise((done, reject) => { const child = spawn("bash", [resolve(import.meta.dirname, "linux/build-ddrescue.sh")], { stdio: "inherit" }); child.on("error", reject); child.on("exit", code => code === 0 ? done() : reject(new Error(`GNU adapter build exited ${code}`))); });
   const root = resolve(import.meta.dirname, "../src-tauri");
   const include = linux ? "/usr/include" : "/opt/homebrew/include";
-  if (!existsSync(`${include}/tsk/libtsk.h`)) throw new Error("Missing Sleuth Kit development headers. On Debian: sudo apt install libtsk-dev");
+  if (!existsSync(`${include}/tsk/libtsk.h`)) throw new Error("Missing Sleuth Kit development headers. Debian family: sudo apt install libtsk-dev. Fedora: sudo dnf install sleuthkit-devel");
   const source = resolve(root, "src/image_helper.cpp");
   const target =
     linux ? (process.arch === "arm64" ? "aarch64-unknown-linux-gnu" : "x86_64-unknown-linux-gnu") : (process.arch === "arm64" ? "aarch64-apple-darwin" : "x86_64-apple-darwin");

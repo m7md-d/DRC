@@ -1,10 +1,10 @@
-# DRC on Debian-family Linux
+# DRC on Linux
 
-DRC opens its own desktop window. The packaged application needs neither a browser nor a development server. The initial Linux packages target **Debian 12 or newer, amd64 and arm64**. Other distributions are not validated yet. Ubuntu / Linux Mint are Debian-family reference profiles in the app; a profile is not a claim that a package was tested on that distribution.
+DRC opens its own desktop window. The packaged application needs neither a browser nor a development server. The initial Linux packages target **Debian 12 or newer, amd64 and arm64**. Fedora has a separate RPM build target based on Fedora 43, for x86_64 and aarch64. The app groups Debian / Ubuntu / Linux Mint under **Debian family** because their current reference commands are identical. Fedora uses its own DNF commands. Package-build and generated-file checks do not establish physical-device or desktop-session validation.
 
 ## Download and install
 
-1. Open [DRC Releases](https://github.com/m7md-d/DRC/releases). Select a published version and download its `.deb` for your architecture, `SHA256SUMS`, and optionally `install-debian.sh`. If no release exists, use the workflow artifacts or build from source below; a prepared workflow does not create a release until it runs successfully.
+1. Open [DRC Releases](https://github.com/m7md-d/DRC/releases). Select a version and download its `.deb` for your architecture, `SHA256SUMS`, and optionally `install-debian.sh`. If no release exists, use the workflow artifacts or build from source below; a prepared workflow does not create a release until it runs successfully.
 2. Check your architecture:
 
    ```sh
@@ -15,7 +15,7 @@ DRC opens its own desktop window. The packaged application needs neither a brows
 3. In the download folder, verify the exact downloaded package against its entry in `SHA256SUMS`. The file lists both architectures; checking your one downloaded file avoids a missing-file error for the other architecture:
 
    ```sh
-   sha256sum DRC_0.4.3_arm64.deb
+   sha256sum DRC_VERSION_arm64.deb
    ```
 
    Compare the printed checksum with the matching filename in `SHA256SUMS`. Package filenames use the actual version/architecture from the release. Checksums detect an altered download; obtain them from the same reviewed official release.
@@ -23,10 +23,10 @@ DRC opens its own desktop window. The packaged application needs neither a brows
 
    ```sh
    sudo apt update
-   sudo apt install ./DRC_0.4.3_arm64.deb
+   sudo apt install ./DRC_VERSION_arm64.deb
    ```
 
-   Alternatively, inspect the provided script, then run `bash install-debian.sh ./DRC_0.4.3_arm64.deb`. It checks the package name and architecture and uses APT for dependencies. It does not modify device permissions or read/write connected media.
+   Alternatively, inspect the provided script, then run `bash install-debian.sh ./DRC_VERSION_arm64.deb`. It checks the package name and architecture and uses APT for dependencies. It does not modify device permissions or read/write connected media.
 5. Launch **DRC** from your desktop's Applications menu, or run `drc` in a terminal **as your ordinary desktop user**. Never start DRC with `sudo`.
 
 The package includes its private image-reader libraries and **GNU ddrescue 1.30** as `drc-ddrescue`. APT resolves WebKitGTK/GTK and installs SMART, USB, udev and standalone Sleuth Kit tools. Dependencies require network access on first installation. DRC itself does not contact a server to inspect or copy data. This is a desktop package, not a headless server utility.
@@ -50,7 +50,7 @@ DRC's read-only source handle and exclusive claim are not a hardware or system-w
 
 ## Standalone tool installation and reference
 
-The app's **Reference** opens an offline cheat sheet. Select **Linux**, then **Debian**, **Ubuntu**, or **Linux Mint**. Commands are grouped by installation, device identification, inspection, imaging, map review and filesystem exploration. Search includes flags. Destructive examples are hidden until explicitly enabled. Examples are copied only; they are never executed by the app.
+The app's **Reference** opens an offline cheat sheet. Select **Linux**, then **Debian family** (Debian / Ubuntu / Linux Mint) or **Fedora**. Commands are grouped by installation, device identification, inspection, imaging, map review and filesystem exploration. Search includes flags. Destructive examples are hidden until explicitly enabled. Examples are copied only; they are never executed by the app.
 
 For independent terminal use:
 
@@ -94,7 +94,7 @@ This builds for the host container architecture. It runs frontend tests, Rust te
 
 ## GitHub builds
 
-The **Debian desktop packages** workflow supports pull requests, a manual run and version tags. Each successful run uploads amd64 and arm64 package artifacts. A version tag such as `v0.4.3` publishes a release **only after both builds pass**. The repository must allow Actions and its token to create releases. Review the version in `package.json`, `Cargo.toml` and Tauri configuration before tagging.
+The **Desktop packages** workflow supports pull requests, a manual run and version tags. Each successful run uploads amd64 and arm64 package artifacts. A version tag such as `vX.Y.Z` publishes a release **only after all Debian/Fedora architecture builds pass**. The repository must allow Actions and its token to create releases. Use the [release script](RELEASING.md) to synchronize versions and create the tag.
 
 ## Updating, removal and startup errors
 
@@ -103,3 +103,32 @@ Install a new reviewed package with `sudo apt install ./NEW_PACKAGE.deb`; local 
 If dependency resolution fails, confirm that your Debian-family release provides WebKitGTK 4.1 and that package indexes are current. If the app cannot start, run `drc` from your normal terminal and preserve the exact error. A missing display requires a desktop session. A raw-device permission denial is an access restriction, not a diagnosis of disk failure. Do not change source permissions or filesystem contents in response to it.
 
 Build/dependency references: [Tauri Debian packaging](https://v2.tauri.app/distribute/debian/), [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/), [Debian lsblk manual](https://manpages.debian.org/bookworm/util-linux/lsblk.8.en.html), [GNU ddrescue](https://www.gnu.org/software/ddrescue/manual/ddrescue_manual.html).
+
+
+## Fedora packages
+
+Use a conventional Fedora 43 or newer desktop with DNF; Atomic desktops such as Silverblue/Kinoite are not covered by this installer. Download the matching `.rpm` and `SHA256SUMS` from the same release. Verify the checksum, then install the reviewed local package:
+
+```sh
+sha256sum --check --ignore-missing SHA256SUMS
+sudo dnf install ./DRC-VERSION-RELEASE.ARCH.rpm
+```
+
+Replace the filename with the actual downloaded package. Alternatively, run `bash install-fedora.sh /absolute/path/to/the-package.rpm`; the script checks the package name and architecture before asking DNF to resolve dependencies. Launch `drc` as your normal desktop user. The package includes the same GNU ddrescue 1.30 adapter and image reader used by the Debian target. Access to physical sources still uses Linux's existing read-only/exclusive and UDisks2 checks; the RPM adds no disk permissions, SELinux exceptions or background recovery operations.
+
+The **Command reference** provides Fedora's standalone tool installation command:
+
+```sh
+sudo dnf install ddrescue smartmontools sleuthkit testdisk usbutils systemd-udev pciutils udisks2 util-linux exfatprogs
+```
+
+To build a Fedora package from source in an isolated container:
+
+```sh
+docker build --file scripts/linux/Dockerfile.fedora --target artifacts --output type=local,dest=artifacts/fedora .
+docker build --file scripts/linux/Dockerfile.fedora --target install-check .
+```
+
+For a source build on Fedora, install Node.js 22 and stable Rust, plus Tauri's [Fedora prerequisites](https://v2.tauri.app/start/prerequisites/#linux), `gcc-c++ make pkgconf-pkg-config sleuthkit-devel patchelf lzip python3 rpm-build`, then run `npm ci` and `npm run desktop:build:fedora`. Build output is under `src-tauri/target/release/bundle/rpm/`. GitHub Actions builds both Fedora architectures independently and checks installation in a fresh Fedora image; it publishes only on an existing version tag after all jobs pass.
+
+Package names: [Fedora ddrescue](https://packages.fedoraproject.org/pkgs/ddrescue/ddrescue/), [systemd-udev](https://packages.fedoraproject.org/pkgs/systemd/systemd-udev/), [Sleuth Kit development files](https://packages.fedoraproject.org/pkgs/sleuthkit/sleuthkit-devel/). RPM configuration follows [Tauri's RPM packaging guide](https://v2.tauri.app/distribute/rpm/).

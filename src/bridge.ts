@@ -17,10 +17,17 @@ import type {
   ExtractionPlan,
   ExtractionJob,
   ArtifactPage,
-  RecoveryRun, RecoveryTarget, RecoveryOptions,
+  RecoveryRun,
+  RecoveryTarget,
+  RecoveryOptions,
 } from "./types";
 
 export const native = isTauri();
+
+export interface WindowPresentation {
+  controlsSide: "left" | "right" | "none";
+  fullscreen: boolean;
+}
 
 function request<T>(
   command: string,
@@ -36,10 +43,13 @@ function request<T>(
 }
 
 export const bridge = {
+  windowPresentation: () => request<WindowPresentation>("window_presentation"),
   recoveryTargets: () => request<RecoveryTarget[]>("recovery_targets"),
-  recoveryChecks: (targetKey: string, options: RecoveryOptions) => request<RecoveryRun>("run_recovery_checks", { targetKey, options }),
+  recoveryChecks: (targetKey: string, options: RecoveryOptions) =>
+    request<RecoveryRun>("run_recovery_checks", { targetKey, options }),
   stopRecoveryChecks: () => request<void>("stop_recovery_checks"),
-  hostEvidence: (kind: "topology" | "kernel") => request<QueryResult>("read_host_evidence", { kind }),
+  hostEvidence: (kind: "topology" | "kernel") =>
+    request<QueryResult>("read_host_evidence", { kind }),
   discover: () => request<Discovery>("discover_devices"),
   tools: () => request<ToolReport[]>("installed_tools"),
   smart: (token: string, deviceType = "auto") =>
@@ -111,9 +121,15 @@ export async function subscribe(handlers: {
 }): Promise<UnlistenFn> {
   if (!native) return () => {};
   const unlisten = await Promise.all([
-    listen<RecoveryRun>("recovery-update", event => handlers.recovery?.(event.payload)),
-    listen<Discovery>("live-discovery", (event) => handlers.discovery?.(event.payload)),
-    listen<QueryResult>("live-connection", (event) => handlers.connection?.(event.payload)),
+    listen<RecoveryRun>("recovery-update", (event) =>
+      handlers.recovery?.(event.payload),
+    ),
+    listen<Discovery>("live-discovery", (event) =>
+      handlers.discovery?.(event.payload),
+    ),
+    listen<QueryResult>("live-connection", (event) =>
+      handlers.connection?.(event.payload),
+    ),
     listen<CommandRecord>("command-record", (event) =>
       handlers.command(event.payload),
     ),

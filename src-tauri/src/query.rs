@@ -21,6 +21,9 @@ pub enum ReadQuery {
     UsbRegistry,
     UsbHostPorts,
     UsbStorageServices,
+    NetworkRegistry,
+    PortTransports,
+    NetworkStatus,
     MediaRegistry,
     SmartInfo {
         executable: String,
@@ -89,6 +92,8 @@ impl ReadQuery {
                     "SPUSBDataType".into(),
                     "SPThunderboltDataType".into(),
                     "SPNVMeDataType".into(),
+                    "SPDisplaysDataType".into(),
+                    "SPNetworkDataType".into(),
                 ],
             ),
             Self::UsbRegistry => (
@@ -115,6 +120,22 @@ impl ReadQuery {
                     "-l".into(),
                 ],
             ),
+            Self::NetworkRegistry | Self::PortTransports => (
+                "/usr/sbin/ioreg".into(),
+                vec![
+                    "-a".into(),
+                    "-r".into(),
+                    "-c".into(),
+                    if matches!(self, Self::NetworkRegistry) {
+                        "IOEthernetInterface"
+                    } else {
+                        "IOPortTransportState"
+                    }
+                    .into(),
+                    "-l".into(),
+                ],
+            ),
+            Self::NetworkStatus => ("/sbin/ifconfig".into(), vec!["-a".into()]),
             Self::MediaRegistry => (
                 "/usr/sbin/ioreg".into(),
                 vec![

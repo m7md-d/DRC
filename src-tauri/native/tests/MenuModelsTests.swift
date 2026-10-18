@@ -106,6 +106,16 @@ import Foundation
     let legacy = try JSONDecoder().decode(
       Discovery.self, from: Data(#"{"devices":[],"observedAt":1}"#.utf8))
     check(legacy.unavailableMedia == nil, "Older discovery snapshots still decode")
+    func port(_ kind: String, _ fields: [String: Any]) throws -> PortNode {
+      let object: [String: Any] = ["id":"fixture", "label":"Fixture", "kind":kind, "source":"Fixture", "fields":fields, "children":[], "diskIds":[], "observations":[]]
+      return try JSONDecoder().decode(PortNode.self, from: JSONSerialization.data(withJSONObject: object))
+    }
+    let ethernet = try port("Network interface", ["linkStatus":"inactive", "flags":"UP", "media":"autoselect (none)"])
+    check(ethernet.readings.contains(where: { $0.0 == "Link status" && $0.1 == "inactive" }), "Administrative UP does not imply a connected Ethernet link")
+    check(!ethernet.readings.contains(where: { $0.0 == "Power available" }), "Network interfaces do not show unrelated USB budgets")
+    let display = try port("Display output", ["Active":false, "LinkRateDescription":"No Link", "HPD_StateDescription":"Unknown"])
+    check(display.readings.contains(where: { $0.0 == "Hot-plug state" && $0.1 == "Unknown" }), "Unknown display hot-plug state remains unknown")
+    check(display.readings.contains(where: { $0.0 == "Link / resolution" && $0.1 == "No Link" }), "Inactive display transport preserves its original link reading")
     print("Native menu models: \(checks) checks passed")
   }
 }

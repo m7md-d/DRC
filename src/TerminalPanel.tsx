@@ -15,6 +15,7 @@ export function TerminalPanel({
   setMode,
   onCopy,
   compact,
+  onExpand,
   onToggle,
 }: {
   records: CommandRecord[];
@@ -25,6 +26,7 @@ export function TerminalPanel({
   setMode: (mode: "commands" | "events") => void;
   onCopy: (text: string) => void;
   compact: boolean;
+  onExpand: () => void;
   onToggle: () => void;
 }) {
   const container = useRef<HTMLDivElement>(null);
@@ -106,7 +108,13 @@ export function TerminalPanel({
             className={mode === "commands" ? "active" : ""}
             data-stream="commands"
             aria-pressed={mode === "commands"}
-            onClick={() => setMode("commands")}
+            aria-expanded={!compact && mode === "commands"}
+            aria-controls="output-dock-content"
+            data-hint="Open original command output and command history."
+            onClick={() => {
+              setMode("commands");
+              onExpand();
+            }}
           >
             <Icon name="terminal" />
             Command output<span>{records.length}</span>
@@ -115,7 +123,13 @@ export function TerminalPanel({
             className={mode === "events" ? "active" : ""}
             data-stream="events"
             aria-pressed={mode === "events"}
-            onClick={() => setMode("events")}
+            aria-expanded={!compact && mode === "events"}
+            aria-controls="output-dock-content"
+            data-hint="Open the recorded connection event stream."
+            onClick={() => {
+              setMode("events");
+              onExpand();
+            }}
           >
             <Icon name="chart" />
             Connection events<span>{events.length}</span>
@@ -132,6 +146,8 @@ export function TerminalPanel({
           </button>
           <button
             onClick={onToggle}
+            aria-expanded={!compact}
+            aria-controls="output-dock-content"
             title={
               compact ? "Expand command output" : "Collapse command output"
             }
@@ -143,7 +159,12 @@ export function TerminalPanel({
           </button>
         </div>
       </div>
-      <div className="terminal-body">
+      <div
+        className="terminal-body"
+        id="output-dock-content"
+        aria-hidden={compact}
+        inert={compact}
+      >
         <aside className="command-history">
           {mode === "commands" ? (
             records.map((item) => (
@@ -177,7 +198,7 @@ export function TerminalPanel({
         </aside>
         <div className="terminal-viewport" ref={container} />
       </div>
-      <div className="terminal-footer">
+      <div className="terminal-footer" aria-hidden={compact}>
         <span title={record ? commandLine(record) : ""}>
           {mode === "commands" && record
             ? commandLine(record)

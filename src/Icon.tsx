@@ -1,10 +1,51 @@
 const paths = {
+  network: (
+    <>
+      <rect x="2" y="5" width="20" height="13" rx="2" />
+      <path d="M6 5v5h12V5M7 18v3m10-3v3M9 8v2m3-2v2m3-2v2" />
+    </>
+  ),
+  display: (
+    <>
+      <rect x="2" y="3" width="20" height="14" rx="2" />
+      <path d="M8 21h8m-4-4v4" />
+    </>
+  ),
+  sidebar: (
+    <>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M9 4v16M5.5 8h1M5.5 12h1" />
+    </>
+  ),
   check: <path d="m5 12 4 4L19 6" />,
-  power: <><path d="M12 2v9M7 5a9 9 0 1 0 10 0"/></>,
-  usb: <><path d="M12 3v14m-3-11 3-3 3 3M12 13l-6-3V7m6 8 6-4V8"/><circle cx="6" cy="6" r="1.5"/><rect x="16.5" y="5" width="3" height="3"/><circle cx="12" cy="19" r="2"/></>,
-  hub: <><rect x="8" y="3" width="8" height="5" rx="1"/><path d="M12 8v5M4 17v-4h16v4"/><rect x="1" y="17" width="6" height="4" rx="1"/><rect x="9" y="17" width="6" height="4" rx="1"/><rect x="17" y="17" width="6" height="4" rx="1"/></>,
-  temperature: <><path d="M10 14V5a2 2 0 0 1 4 0v9a4 4 0 1 1-4 0M12 10v8"/></>,
-  folder: <path d="M3 6h7l2 3h9v11H3z"/>,
+  power: (
+    <>
+      <path d="M12 2v9M7 5a9 9 0 1 0 10 0" />
+    </>
+  ),
+  usb: (
+    <>
+      <path d="M12 3v14m-3-11 3-3 3 3M12 13l-6-3V7m6 8 6-4V8" />
+      <circle cx="6" cy="6" r="1.5" />
+      <rect x="16.5" y="5" width="3" height="3" />
+      <circle cx="12" cy="19" r="2" />
+    </>
+  ),
+  hub: (
+    <>
+      <rect x="8" y="3" width="8" height="5" rx="1" />
+      <path d="M12 8v5M4 17v-4h16v4" />
+      <rect x="1" y="17" width="6" height="4" rx="1" />
+      <rect x="9" y="17" width="6" height="4" rx="1" />
+      <rect x="17" y="17" width="6" height="4" rx="1" />
+    </>
+  ),
+  temperature: (
+    <>
+      <path d="M10 14V5a2 2 0 0 1 4 0v9a4 4 0 1 1-4 0M12 10v8" />
+    </>
+  ),
+  folder: <path d="M3 6h7l2 3h9v11H3z" />,
   drive: (
     <>
       <rect x="3" y="4" width="18" height="16" rx="2" />

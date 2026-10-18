@@ -228,6 +228,8 @@ impl PlatformBackend for MacOsBackend {
             ("IORegistryUSBReport", ReadQuery::UsbRegistry),
             ("IORegistryPortReport", ReadQuery::UsbHostPorts),
             ("IORegistryStorageReport", ReadQuery::UsbStorageServices),
+            ("IORegistryNetworkReport", ReadQuery::NetworkRegistry),
+            ("IORegistryTransportReport", ReadQuery::PortTransports),
         ] {
             let registry = execute(query)?;
             let (properties, registry_error) = match successful_plist(&registry) {
@@ -237,6 +239,23 @@ impl PlatformBackend for MacOsBackend {
             fields.as_mut().unwrap()[key] = serde_json::json!({"fields":properties,"parseError":registry_error,"record":registry});
             sink(registry);
         }
+        let network = execute(ReadQuery::NetworkStatus)?;
+        let network_error =
+            (network.exit_code != Some(0) || network.timed_out || network.launch_error.is_some())
+                .then(|| {
+                    format!(
+                        "Interface query failed: exit {:?}; timeout {}; launch {:?}",
+                        network.exit_code, network.timed_out, network.launch_error
+                    )
+                });
+        let interfaces = if network_error.is_none() {
+            crate::network::parse_ifconfig(&network.stdout)
+        } else {
+            vec![]
+        };
+        fields.as_mut().unwrap()["NetworkInterfaceReport"] =
+            serde_json::json!({"fields":interfaces,"parseError":network_error,"record":network});
+        sink(network);
         Ok(QueryResult {
             record,
             fields,
